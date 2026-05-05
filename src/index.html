@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>三模态交互原型</title>
+  <style>button{margin:6px} #log{white-space:pre-wrap;max-height:200px;overflow:auto;border:1px solid #ddd;padding:8px}</style>
+</head>
+<body>
+  <h1>三模态交互原型（示例）</h1>
+  <p>将手势、眼动与语音整合到此页面进行调试。</p>
+  <div>
+    <button id="btnGesture">启动手势</button>
+    <button id="btnEye">启动眼动</button>
+    <button id="btnVoice">初始化语音</button>
+    <button id="btnVoiceStart">开始识别</button>
+  </div>
+  <div id="log">日志：</div>
+
+  <script src="js/gesture.js"></script>
+  <script src="js/eye.js"></script>
+  <script src="js/voice.js"></script>
+  <script>
+    const log = (t)=>{const el=document.getElementById('log'); el.textContent = (el.textContent || '') + '\n' + t; el.scrollTop = el.scrollHeight;};
+
+    document.getElementById('btnGesture').addEventListener('click', async ()=>{
+      await window.initGesture(); log('gesture started');
+    });
+    document.getElementById('btnEye').addEventListener('click', async ()=>{
+      await window.initEye(); log('eye started');
+    });
+    document.getElementById('btnVoice').addEventListener('click', ()=>{
+      window.initVoice({lang:'zh-CN', continuous:false}); log('voice initialized');
+    });
+    document.getElementById('btnVoiceStart').addEventListener('click', ()=>{ window.startVoice && window.startVoice(); log('voice start'); });
+
+    window.addEventListener('gesture', (e)=>{ log('gesture: '+ JSON.stringify(e.detail)); });
+    window.addEventListener('gaze', (e)=>{ log('gaze: '+Math.round(e.detail.x)+','+Math.round(e.detail.y)); });
+    window.addEventListener('voice', (e)=>{ log('voice: '+ e.detail.transcript + ' ('+ e.detail.confidence +')'); });
+  </script>
+</body>
+</html>

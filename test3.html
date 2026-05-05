@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小蓝书社区 - 视觉交互增强版</title>
+    <style>
+        :root {
+            --primary-blue: #3a24ff;
+            --bg-gray: #f4f4f4;
+            --text-main: #333;
+            --glass: rgba(255, 255, 255, 0.8);
+            --neon-pink: #ff00ff;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-gray); color: var(--text-main); overflow-x: hidden; }
+
+        /* --- 1. 登录页面 --- */
+        #login-page {
+            position: fixed; inset: 0; z-index: 2000;
+            background: linear-gradient(135deg, #248aff 0%, #a352ff 100%);
+            display: flex; align-items: center; justify-content: center;
+            transition: opacity 0.5s ease;
+        }
+        .login-card {
+            background: white; padding: 2.5rem; border-radius: 24px; width: 90%; max-width: 400px;
+            text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .login-card h2 { margin-bottom: 1.5rem; color: var(--primary-blue); }
+        .login-card input {
+            width: 100%; padding: 12px; margin-bottom: 1rem; border: 1px solid #ddd; border-radius: 12px; outline: none;
+        }
+        .login-card button {
+            width: 100%; padding: 12px; background: var(--primary-blue); color: white;
+            border: none; border-radius: 12px; font-weight: bold; cursor: pointer;
+        }
+
+        /* --- 2. 导航栏 --- */
+        nav {
+            position: fixed; top: 0; width: 100%; height: 64px;
+            background: var(--glass); backdrop-filter: blur(10px);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 5%; z-index: 1000; border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+        .nav-logo { color: var(--primary-blue); font-size: 1.5rem; font-weight: 900; cursor: pointer; }
+        .nav-links span { margin-left: 20px; cursor: pointer; font-weight: 500; opacity: 0.7; transition: 0.3s; }
+        .nav-links span:hover { opacity: 1; color: var(--primary-blue); }
+
+        /* --- 3. 视觉滚动核心组件 --- */
+        #motion-pointer {
+            position: fixed; width: 30px; height: 30px; border: 3px solid var(--neon-pink);
+            border-radius: 50%; z-index: 9999; pointer-events: none;
+            box-shadow: 0 0 15px var(--neon-pink); display: none; transform: translate(-50%, -50%);
+        }
+        .scroll-zone {
+            position: fixed; right: 20px; width: 110px; height: 200px;
+            background: rgba(58, 36, 255, 0.05); border: 2px dashed var(--primary-blue);
+            border-radius: 20px; z-index: 900; display: none;
+            flex-direction: column; align-items: center; justify-content: center;
+            color: var(--primary-blue); font-weight: bold; font-size: 0.9rem;
+            backdrop-filter: blur(4px); transition: all 0.3s;
+        }
+        .scroll-zone.active { background: rgba(58, 36, 255, 0.2); border-style: solid; transform: scale(1.05); }
+        #zone-up { top: 120px; }
+        #zone-down { bottom: 100px; }
+        
+        .zone-progress { 
+            width: 0%; height: 4px; background: var(--primary-blue); 
+            position: absolute; bottom: 10px; border-radius: 2px; transition: width 0.1s;
+        }
+
+        /* --- 4. 摄像头预览 --- */
+        .preview-container {
+            position: fixed; bottom: 20px; left: 20px; width: 140px; height: 105px;
+            border-radius: 12px; overflow: hidden; z-index: 1000;
+            border: 2px solid var(--primary-blue); display: none; background: #000;
+        }
+        #webcam-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+        /* --- 5. 内容展示区 --- */
+        .container { padding: 84px 5% 40px; }
+        .ai-controls { display: flex; gap: 10px; margin-bottom: 25px; justify-content: center; }
+        .ai-btn {
+            padding: 8px 18px; border-radius: 20px; border: 2px solid var(--primary-blue);
+            background: white; color: var(--primary-blue); cursor: pointer; font-weight: bold;
+        }
+        .ai-btn.active { background: var(--primary-blue); color: white; }
+
+        .waterfall { column-count: 2; column-gap: 15px; }
+        @media (min-width: 768px) { .waterfall { column-count: 4; } }
+
+        .post-card {
+            break-inside: avoid; background: white; border-radius: 12px;
+            margin-bottom: 15px; overflow: hidden; cursor: pointer;
+            transition: 0.3s; box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        .post-card:hover { transform: translateY(-5px); }
+        .post-card img { width: 100%; display: block; }
+        .post-info { padding: 12px; }
+        .post-title { font-size: 0.9rem; font-weight: bold; margin-bottom: 8px; }
+        .post-meta { display: flex; justify-content: space-between; font-size: 0.75rem; color: #999; }
+
+        /* --- 6. 详情弹窗 --- */
+        #detail-modal {
+            position: fixed; inset: 0; z-index: 1500; background: rgba(0,0,0,0.8);
+            display: none; align-items: center; justify-content: center; padding: 20px;
+        }
+        .modal-content {
+            background: white; width: 100%; max-width: 900px; height: 85vh;
+            border-radius: 24px; overflow: hidden; display: flex; flex-direction: column;
+        }
+        @media (min-width: 768px) { .modal-content { flex-direction: row; } }
+        .modal-img { flex: 1.4; background: #111; display: flex; align-items: center; justify-content: center; }
+        .modal-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .modal-side { flex: 1; display: flex; flex-direction: column; padding: 24px; }
+        .comment-list { flex: 1; overflow-y: auto; margin: 15px 0; border-top: 1px solid #eee; padding-top: 10px; }
+        .comment-item { margin-bottom: 12px; font-size: 0.85rem; line-height: 1.4; }
+        .comment-user { font-weight: bold; color: #444; }
+        .comment-input-area { display: flex; gap: 10px; border-top: 1px solid #eee; padding-top: 15px; }
+        .comment-input-area input { flex: 1; padding: 10px 15px; border: 1px solid #eee; border-radius: 20px; outline: none; }
+
+        .hidden { display: none !important; }
+        canvas#buffer { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="motion-pointer"></div>
+    <div id="zone-up" class="scroll-zone"><span>向上滑动</span><div class="zone-progress"></div></div>
+    <div id="zone-down" class="scroll-zone"><span>向下滑动</span><div class="zone-progress"></div></div>
+    <div class="preview-container" id="camera-preview"><video id="webcam-video" autoplay playsinline></video></div>
+    <canvas id="buffer"></canvas>
+
+    <div id="login-page">
+        <div class="login-card">
+            <h2>小蓝书社区</h2>
+            <input type="text" id="username-input" placeholder="输入昵称探索世界...">
+            <button onclick="handleLogin()">开启旅程</button>
+        </div>
+    </div>
+
+    <nav class="hidden" id="navbar">
+        <div class="nav-logo" onclick="showHome()">BLUE Clone</div>
+        <div class="nav-links">
+            <span onclick="showHome()">发现</span>
+            <span onclick="showProfile()">个人中心</span>
+        </div>
+    </nav>
+
+    <div id="home-page" class="container hidden">
+        <div class="ai-controls">
+            <button id="toggle-vision" class="ai-btn" onclick="toggleVision()">开启手势/头部滚动模式</button>
+        </div>
+        <div class="waterfall" id="waterfall-container"></div>
+    </div>
+
+    <div id="profile-page" class="container hidden">
+        <div style="text-align: center; margin-bottom: 40px;">
+            <h1 id="user-display">用户</h1>
+            <p style="color: #666; margin-top: 10px;">我参与讨论过的足迹</p>
+        </div>
+        <div class="waterfall" id="profile-waterfall"></div>
+    </div>
+
+    <div id="detail-modal" onclick="closeModal()">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-img"><img id="modal-img-tag" src=""></div>
+            <div class="modal-side">
+                <h2 id="modal-title">标题</h2>
+                <p id="modal-author" style="color: #999; margin: 5px 0 15px;">@作者</p>
+                <div class="comment-list" id="comment-list-container"></div>
+                <div class="comment-input-area">
+                    <input type="text" id="comment-input" placeholder="有爱评论，说点好听的...">
+                    <button onclick="submitComment()" style="border:none; color:var(--primary-blue); background:none; cursor:pointer; font-weight:bold;">发送</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. 数据与基础业务逻辑 ---
+        const mockPosts = Array.from({ length: 28 }).map((_, i) => ({
+            id: i,
+            title: `这里是精彩的世界内容分享 No.${i + 1}`,
+            author: `创作者_${i + 100}`,
+            likes: Math.floor(Math.random() * 5000),
+            img: `https://picsum.photos/400/${400 + (i % 4) * 40}?random=${i}`,
+            comments: [{ user: '路人甲', text: '这个排版很有感觉！' }]
+        }));
+
+        let currentUser = "";
+        let interactedIds = new Set();
+        let activePostId = null;
+
+        function handleLogin() {
+            const input = document.getElementById('username-input');
+            if (!input.value) return alert('请输入昵称');
+            currentUser = input.value;
+            document.getElementById('login-page').style.opacity = '0';
+            setTimeout(() => {
+                document.getElementById('login-page').classList.add('hidden');
+                document.getElementById('navbar').classList.remove('hidden');
+                showHome();
+            }, 500);
+        }
+
+        function renderWaterfall(containerId, data) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = data.map(post => `
+                <div class="post-card" onclick="openModal(${post.id})">
+                    <img src="${post.img}">
+                    <div class="post-info">
+                        <div class="post-title">${post.title}</div>
+                        <div class="post-meta">
+                            <span>@ ${post.author}</span>
+                            <span>❤️ ${post.likes}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function showHome() {
+            document.getElementById('home-page').classList.remove('hidden');
+            document.getElementById('profile-page').classList.add('hidden');
+            renderWaterfall('waterfall-container', mockPosts);
+        }
+
+        function showProfile() {
+            document.getElementById('home-page').classList.add('hidden');
+            document.getElementById('profile-page').classList.remove('hidden');
+            document.getElementById('user-display').innerText = currentUser;
+            const myData = mockPosts.filter(p => interactedIds.has(p.id));
+            renderWaterfall('profile-waterfall', myData);
+        }
+
+        function openModal(id) {
+            activePostId = id;
+            const post = mockPosts.find(p => p.id === id);
+            document.getElementById('modal-img-tag').src = post.img;
+            document.getElementById('modal-title').innerText = post.title;
+            document.getElementById('modal-author').innerText = `@ ${post.author}`;
+            drawComments();
+            document.getElementById('detail-modal').style.display = 'flex';
+        }
+
+        function closeModal() { document.getElementById('detail-modal').style.display = 'none'; }
+
+        function drawComments() {
+            const post = mockPosts.find(p => p.id === activePostId);
+            document.getElementById('comment-list-container').innerHTML = post.comments.map(c => `
+                <div class="comment-item"><span class="comment-user">${c.user}: </span>${c.text}</div>
+            `).join('');
+        }
+
+        function submitComment() {
+            const input = document.getElementById('comment-input');
+            if (!input.value) return;
+            const post = mockPosts.find(p => p.id === activePostId);
+            post.comments.push({ user: currentUser, text: input.value });
+            interactedIds.add(activePostId);
+            input.value = "";
+            drawComments();
+        }
+
+        // --- 2. 视觉感应逻辑 (像素差分) ---
+        const video = document.getElementById('webcam-video');
+        const buffer = document.getElementById('buffer');
+        const bctx = buffer.getContext('2d', { willReadFrequently: true });
+        const pointer = document.getElementById('motion-pointer');
+        const zones = { up: document.getElementById('zone-up'), down: document.getElementById('zone-down') };
+
+        let isVisionActive = false;
+        let prevFrame = null;
+        let currentXY = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        let targetXY = { x: 0, y: 0 };
+        let hoverTime = { up: 0, down: 0 };
+
+        async function toggleVision() {
+            isVisionActive = !isVisionActive;
+            const btn = document.getElementById('toggle-vision');
+            btn.classList.toggle('active');
+            btn.innerText = isVisionActive ? "视觉模式: 已开启" : "开启手势/头部滚动模式";
+
+            const display = isVisionActive ? 'flex' : 'none';
+            zones.up.style.display = display;
+            zones.down.style.display = display;
+            pointer.style.display = isVisionActive ? 'block' : 'none';
+            document.getElementById('camera-preview').style.display = isVisionActive ? 'block' : 'none';
+
+            if (isVisionActive) {
+                if (!video.srcObject) {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
+                    video.srcObject = stream;
+                }
+                requestAnimationFrame(runVision);
+            }
+        }
+
+        function runVision() {
+            if (!isVisionActive) return;
+
+            buffer.width = 160; buffer.height = 120;
+            bctx.save();
+            bctx.scale(-1, 1);
+            bctx.drawImage(video, -160, 0, 160, 120);
+            bctx.restore();
+
+            const frame = bctx.getImageData(0, 0, 160, 120);
+            if (prevFrame) {
+                let sumX = 0, sumY = 0, count = 0;
+                for (let i = 0; i < frame.data.length; i += 4) {
+                    const diff = Math.abs(frame.data[i] - prevFrame.data[i]);
+                    if (diff > 45) { // 运动阈值
+                        sumX += (i / 4) % 160;
+                        sumY += Math.floor((i / 4) / 160);
+                        count++;
+                    }
+                }
+                if (count > 40) {
+                    targetXY.x = (sumX / count) * (window.innerWidth / 160);
+                    targetXY.y = (sumY / count) * (window.innerHeight / 120);
+                }
+            }
+            prevFrame = frame;
+
+            // 平滑移动粉色触点
+            currentXY.x += (targetXY.x - currentXY.x) * 0.15;
+            currentXY.y += (targetXY.y - currentXY.y) * 0.15;
+            pointer.style.left = `${currentXY.x}px`;
+            pointer.style.top = `${currentXY.y}px`;
+
+            checkZones();
+            requestAnimationFrame(runVision);
+        }
+
+        function checkZones() {
+            ['up', 'down'].forEach(key => {
+                const rect = zones[key].getBoundingClientRect();
+                const bar = zones[key].querySelector('.zone-progress');
+                
+                if (currentXY.x > rect.left && currentXY.x < rect.right &&
+                    currentXY.y > rect.top && currentXY.y < rect.bottom) {
+                    
+                    zones[key].classList.add('active');
+                    hoverTime[key] += 16; // 假设 60fps
+                    
+                    let progress = Math.min((hoverTime[key] / 600) * 100, 100);
+                    bar.style.width = progress + '%';
+
+                    if (hoverTime[key] > 600) { // 停留超过 0.6 秒触发滚动
+                        window.scrollBy(0, key === 'up' ? -15 : 15);
+                    }
+                } else {
+                    zones[key].classList.remove('active');
+                    hoverTime[key] = 0;
+                    bar.style.width = '0%';
+                }
+            });
+        }
+    </script>
+</body>
+</html>

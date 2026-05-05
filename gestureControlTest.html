@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>未来感手势交互控制台</title>
+    <style>
+        :root {
+            --primary: #a855f7;
+            --bg: #0f172a;
+            --glass: rgba(255, 255, 255, 0.05);
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+            color: white;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        /* 隐藏原始摄像头画面 */
+        #video, #bufferCanvas { display: none; }
+
+        /* 自定义光标 */
+        #cursor {
+            position: fixed;
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--primary);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            box-shadow: 0 0 20px var(--primary);
+            transition: transform 0.1s ease;
+            display: none;
+        }
+
+        .container {
+            display: flex;
+            gap: 2rem;
+            z-index: 10;
+        }
+
+        .button {
+            width: 200px;
+            height: 150px;
+            background: var(--glass);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .button.hover {
+            border-color: var(--primary);
+            background: rgba(168, 85, 247, 0.2);
+            transform: scale(1.05);
+        }
+
+        .btn-progress {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 5px;
+            background: var(--primary);
+            width: 0%;
+        }
+
+        #status {
+            margin-bottom: 2rem;
+            padding: 1rem 2rem;
+            background: var(--primary);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="status">点击授权开启摄像头</button>
+
+    <div class="container">
+        <div class="button" id="btn1">模式 A <div class="btn-progress"></div></div>
+        <div class="button" id="btn2">模式 B <div class="btn-progress"></div></div>
+        <div class="button" id="btn3">重置 <div class="btn-progress"></div></div>
+    </div>
+
+    <div id="cursor"></div>
+
+    <video id="video" autoplay playsinline></video>
+    <canvas id="bufferCanvas"></canvas>
+
+    <script>
+        const video = document.getElementById('video');
+        const bufferCanvas = document.getElementById('bufferCanvas');
+        const ctx = bufferCanvas.getContext('2d', { willReadFrequently: true });
+        const cursor = document.getElementById('cursor');
+        const startBtn = document.getElementById('status');
+        const buttons = document.querySelectorAll('.button');
+
+        let prevFrame = null;
+        let isActive = false;
+        let currentPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        let targetPos = { x: 0, y: 0 };
+        const lerpAmount = 0.15; // 平滑度系数
+
+        // 初始化摄像头
+        startBtn.onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                video.srcObject = stream;
+                isActive = true;
+                startBtn.style.display = 'none';
+                cursor.style.display = 'block';
+                requestAnimationFrame(processFrame);
+            } catch (err) {
+                alert('无法访问摄像头，请检查权限。');
+            }
+        };
+
+        function processFrame() {
+            if (!isActive) return;
+
+            // 将视频绘制到隐藏的 Canvas 
+            bufferCanvas.width = 160; // 降低分辨率以提升性能
+            bufferCanvas.height = 120;
+            ctx.save();
+            ctx.scale(-1, 1); // 镜像处理
+            ctx.drawImage(video, -160, 0, 160, 120);
+            ctx.restore();
+
+            const currentFrame = ctx.getImageData(0, 0, 160, 120);
+            const data = currentFrame.data;
+
+            if (prevFrame) {
+                let totalX = 0, totalY = 0, count = 0;
+
+                for (let i = 0; i < data.length; i += 4) {
+                    // 计算像素亮度
+                    const avg = (data[i] + data[i+1] + data[i+2]) / 3;
+                    const prevAvg = (prevFrame.data[i] + prevFrame.data[i+1] + prevFrame.data[i+2]) / 3;
+                    
+                    // 帧差法阈值判断：如果变化幅度大于 40
+                    if (Math.abs(avg - prevAvg) > 40) {
+                        const pixelIndex = i / 4;
+                        totalX += pixelIndex % 160;
+                        totalY += Math.floor(pixelIndex / 160);
+                        count++;
+                    }
+                }
+
+                if (count > 50) { // 运动点足够多时才移动光标
+                    targetPos.x = (totalX / count) * (window.innerWidth / 160);
+                    targetPos.y = (totalY / count) * (window.innerHeight / 120);
+                }
+            }
+
+            prevFrame = currentFrame;
+
+            // 平滑插值计算 (Lerp)
+            currentPos.x += (targetPos.x - currentPos.x) * lerpAmount;
+            currentPos.y += (targetPos.y - currentPos.y) * lerpAmount;
+
+            // 更新光标位置
+            cursor.style.left = `${currentPos.x}px`;
+            cursor.style.top = `${currentPos.y}px`;
+
+            checkInteraction();
+            requestAnimationFrame(processFrame);
+        }
+
+        // 检测光标与组件的碰撞
+        function checkInteraction() {
+            buttons.forEach(btn => {
+                const rect = btn.getBoundingClientRect();
+                const progress = btn.querySelector('.btn-progress');
+                
+                if (currentPos.x > rect.left && currentPos.x < rect.right &&
+                    currentPos.y > rect.top && currentPos.y < rect.bottom) {
+                    
+                    btn.classList.add('hover');
+                    let currentW = parseFloat(progress.style.width) || 0;
+                    if (currentW < 100) {
+                        progress.style.width = (currentW + 2) + '%';
+                    } else if (currentW >= 100) {
+                        triggerAction(btn.id);
+                        progress.style.width = '0%'; // 触发后重置
+                    }
+                } else {
+                    btn.classList.remove('hover');
+                    progress.style.width = '0%';
+                }
+            });
+        }
+
+        function triggerAction(id) {
+            document.body.style.backgroundColor = '#1e293b';
+            setTimeout(() => document.body.style.backgroundColor = var(--bg), 200);
+            console.log('触发了: ' + id);
+        }
+    </script>
+</body>
+</html>
