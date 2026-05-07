@@ -1,0 +1,69 @@
+CameraX image analysis sample (Kotlin) — integrate into CameraForegroundService
+
+// In CameraForegroundService (pseudocode/sample)
+
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import android.graphics.Bitmap
+import android.graphics.ImageFormat
+import android.media.Image
+import android.content.Intent
+
+private fun startCameraAnalysis() {
+    val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+    cameraProviderFuture.addListener(Runnable {
+        val cameraProvider = cameraProviderFuture.get()
+        val preview = null // not needed for headless analysis
+
+        val analysisUseCase = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+
+        analysisUseCase.setAnalyzer(ContextCompat.getMainExecutor(this)) { image: ImageProxy ->
+            val bitmap = imageToBitmap(image)
+            // run detection (MediaPipe / TFLite) on bitmap
+            val gesture = detectGesture(bitmap) // returns "LEFT"/"RIGHT"/null
+            if (gesture != null) {
+                val b = Intent("com.gesturecontrol.GESTURE_DETECTED")
+                b.putExtra("gesture", gesture)
+                sendBroadcast(b)
+            }
+            image.close()
+        }
+
+        try {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(
+                /* lifecycleOwner= */ this as androidx.lifecycle.LifecycleOwner,
+                CameraSelector.DEFAULT_FRONT_CAMERA,
+                analysisUseCase
+            )
+        } catch (exc: Exception) {
+            // handle
+        }
+    }, ContextCompat.getMainExecutor(this))
+}
+
+private fun imageToBitmap(image: ImageProxy): Bitmap {
+    // convert ImageProxy to Bitmap (implementation omitted for brevity)
+    // many examples online show conversion using YUV -> RGB
+    return Bitmap.createBitmap(1,1,Bitmap.Config.ARGB_8888)
+}
+
+private fun detectGesture(bitmap: Bitmap): String? {
+    // Placeholder. Integrate MediaPipe or TFLite model here.
+    // Return "LEFT" or "RIGHT" when a swipe gesture is detected.
+    return null
+}
+
+Receiver side (AccessibilityService)
+// In GestureAccessibilityService, register a BroadcastReceiver for action com.gesturecontrol.GESTURE_DETECTED
+// and call performSwipeLeft/performSwipeRight accordingly.
+
+Notes:
+- Add CameraX dependencies in app build.gradle: implementation "androidx.camera:camera-core:1.2.0" etc.
+- For production, use MediaPipe or convert your JS model to TFLite for efficient on-device inference.
+- Running camera in background requires a foreground service and careful handling of lifecycle and permissions.
