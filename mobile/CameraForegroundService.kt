@@ -52,8 +52,8 @@ class CameraForegroundService : Service() {
 
     private val cameraExecutor = Executors.newSingleThreadExecutor()
 
-    // YUV->RGB converter for high-performance conversion
-    private var yuvConverter: YuvToRgbConverter? = null
+    // YUV->RGB converter (non-RenderScript)
+    private var yuvConverter: YuvToRgbConverterNoRS? = null
     private var rgbBitmap: Bitmap? = null
 
     // TFLite interpreter (lazy init)
@@ -80,8 +80,8 @@ class CameraForegroundService : Service() {
         startForeground(1, notification)
 
         initInterpreter()
-        // init converter
-        yuvConverter = YuvToRgbConverter(this)
+        // init converter (non-RenderScript)
+        yuvConverter = YuvToRgbConverterNoRS()
         startCameraAnalysis()
     }
 
