@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 数字手势识别控制台</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    
+    <style>
+        :root {
+            --accent: #00f2ff;
+            --bg: #0a0a0c;
+        }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: white;
+            font-family: 'Inter', system-ui, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 0 40px rgba(0, 242, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #webcam {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: rotateY(180deg);
+        }
+        #output_canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform: rotateY(180deg);
+        }
+        .result-panel {
+            margin-top: 30px;
+            text-align: center;
+        }
+        #number-display {
+            font-size: 8rem;
+            font-weight: 900;
+            color: var(--accent);
+            text-shadow: 0 0 30px rgba(0, 242, 255, 0.6);
+            line-height: 1;
+            margin: 10px 0;
+        }
+        .label {
+            text-transform: uppercase;
+            letter-spacing: 0.3em;
+            font-size: 0.9rem;
+            opacity: 0.6;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            transition: opacity 0.5s;
+        }
+    </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+    <div>系统初始化中...</div>
+</div>
+
+<div class="container">
+    <video id="webcam" playsinline></video>
+    <canvas id="output_canvas"></canvas>
+</div>
+
+<div class="result-panel">
+    <div class="label">识别结果</div>
+    <div id="number-display">-</div>
+</div>
+
+<script type="module">
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const numberDisplay = document.getElementById('number-display');
+    const loadingOverlay = document.getElementById('loading');
+
+    // 逻辑判定：根据手指关键点坐标计算数字
+    function getNumber(landmarks) {
+        // 判定手指是否伸出的逻辑：指尖(Tip)的Y坐标是否高于指根(PIP)
+        // 8: 食指, 12: 中指, 16: 无名指, 20: 小指
+        const isIndexUp = landmarks[8].y < landmarks[6].y;
+        const isMiddleUp = landmarks[12].y < landmarks[10].y;
+        const isRingUp = landmarks[16].y < landmarks[14].y;
+        const isLittleUp = landmarks[20].y < landmarks[18].y;
+        
+        // 大拇指逻辑（根据横向坐标判定）
+        // 4: 拇指尖, 3: 拇指第一关节
+        // 注意：因为画面水平翻转了，所以坐标逻辑需适配
+        const isThumbUp = Math.abs(landmarks[4].x - landmarks[2].x) > 0.1;
+
+        const fingersUp = [isIndexUp, isMiddleUp, isRingUp, isLittleUp].filter(Boolean).length;
+
+        // 简单的映射逻辑
+        if (isThumbUp && fingersUp === 4) return "5";
+        if (!isThumbUp && fingersUp === 4) return "4";
+        if (!isThumbUp && isIndexUp && isMiddleUp && isRingUp && !isLittleUp) return "3";
+        if (!isThumbUp && isIndexUp && isMiddleUp && !isRingUp && !isLittleUp) return "2";
+        if (!isThumbUp && isIndexUp && !isMiddleUp && !isRingUp && !isLittleUp) return "1";
+        if (isThumbUp && fingersUp === 0) return "6"; // 扩展：大拇指代表6
+        
+        return fingersUp + (isThumbUp ? 1 : 0);
+    }
+
+    function onResults(results) {
+        // 隐藏加载层
+        loadingOverlay.style.opacity = '0';
+        setTimeout(() => loadingOverlay.style.display = 'none', 500);
+
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            for (const landmarks of results.multiHandLandmarks) {
+                // 绘制手部骨架
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#ffffff33', lineWidth: 2});
+                drawLandmarks(canvasCtx, landmarks, {color: '#00f2ff', lineWidth: 1, radius: 3});
+                
+                // 更新显示数字
+                const num = getNumber(landmarks);
+                numberDisplay.innerText = num;
+            }
+        } else {
+            numberDisplay.innerText = "-";
+        }
+        canvasCtx.restore();
+    }
+
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+    });
+
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 640,
+        height: 480
+    });
+
+    // 确保 Canvas 尺寸正确
+    canvasElement.width = 640;
+    canvasElement.height = 480;
+
+    camera.start();
+</script>
+
+</body>
+</html>
