@@ -52,6 +52,10 @@ class CameraForegroundService : Service() {
 
     private val cameraExecutor = Executors.newSingleThreadExecutor()
 
+    // YUV->RGB converter for high-performance conversion
+    private var yuvConverter: YuvToRgbConverter? = null
+    private var rgbBitmap: Bitmap? = null
+
     // TFLite interpreter (lazy init)
     private var tflite: Interpreter? = null
     private val modelInputSize = 224 // example input size 224x224
@@ -76,6 +80,8 @@ class CameraForegroundService : Service() {
         startForeground(1, notification)
 
         initInterpreter()
+        // init converter
+        yuvConverter = YuvToRgbConverter(this)
         startCameraAnalysis()
     }
 
@@ -235,6 +241,28 @@ class CameraForegroundService : Service() {
 
     // Convert ImageProxy to Bitmap using YuvUtils utility
     private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
-        return YuvUtils.imageProxyToBitmap(image)
+        try {
+            val width = image.width
+            val height = image.height
+            if (rgbBitmap == null || rgbBitmap?.width != width || rgbBitmap?.height != height) {
+                rgbBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            }
+            // Convert ImageProxy to NV21 byte[] using robust YuvUtils helper
+            val nv21 = YuvUtils.yuv420ToNv21(image) ?: return null
+            yuvConverter?.yuvToRgb(nv21, rgbBitmap!!)
+
+            // Rotate if needed
+            val rotation = image.imageInfo.rotationDegrees
+            if (rotation != 0) {
+                val matrix = Matrix()
+                matrix.postRotate(rotation.toFloat())
+                val rotated = Bitmap.createBitmap(rgbBitmap!!, 0, 0, rgbBitmap!!.width, rgbBitmap!!.height, matrix, true)
+                return rotated
+            }
+            return rgbBitmap
+        } catch (e: Exception) {
+            Log.e(TAG, "image->bitmap error", e)
+            return null
+        }
     }
 }
