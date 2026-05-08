@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "AI 手势网页控制v2",
+  "version": "1.0",
+  "description": "使用手势（手掌向上页面向上，手掌向下页面向下）控制网页滚动",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["gesture.css"],
+      "js": ["gesture.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ]
+}
