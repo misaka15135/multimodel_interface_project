@@ -1,5 +1,18 @@
+// 动态加载外部 JS 库
+function loadScript(src) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.crossOrigin = "anonymous";
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+}
+
 // 注入UI元素
 function injectUI() {
+    // 检查是否已经存在，避免重复注入
     if (document.getElementById('gesture-plugin-root')) return;
 
     const root = document.createElement('div');
@@ -40,32 +53,50 @@ async function initGestureControl() {
     let camera = null;
     let hands = null;
 
+    // 滚动逻辑状态
     let activeGesture = null;
     let gestureStartTime = 0;
-    const THRESHOLD_MS = 600;
-    const SCROLL_SPEED = 30;
+    const THRESHOLD_MS = 600; // 降低了一点阈值，0.6秒触发，手掌翻转动作更连贯
+    const SCROLL_SPEED = 30;  // 滚动速度
 
+    // --- 新增：计算两点之间距离的辅助函数 ---
     function getDistance(p1, p2) {
         return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
     }
 
+    // --- 新增：判定是否为“张开手掌” ---
+    // 原理：指尖到手腕的距离，大于指根到手腕的距离
     function isOpenPalm(landmarks) {
+        // 0: 手腕; 5,9,13,17: 指根; 8,12,16,20: 指尖
         const isIndexExtended = getDistance(landmarks[8], landmarks[0]) > getDistance(landmarks[5], landmarks[0]) * 1.2;
         const isMiddleExtended = getDistance(landmarks[12], landmarks[0]) > getDistance(landmarks[9], landmarks[0]) * 1.2;
         const isRingExtended = getDistance(landmarks[16], landmarks[0]) > getDistance(landmarks[13], landmarks[0]) * 1.2;
         const isLittleExtended = getDistance(landmarks[20], landmarks[0]) > getDistance(landmarks[17], landmarks[0]) * 1.2;
+
         return isIndexExtended && isMiddleExtended && isRingExtended && isLittleExtended;
     }
 
+    // --- 核心：识别手掌朝向 ---
     function getHandOrientation(landmarks) {
+        // 必须先满足是“张开的手掌”才判定方向，防止握拳或乱动手时误触
         if (!isOpenPalm(landmarks)) return null;
+
+        // 利用手腕(0)和中指指根(9)在Y轴上的相对位置来判断朝向
+        // Web 坐标系中，Y轴越往下数值越大
         const dy = landmarks[9].y - landmarks[0].y;
-        if (dy < -0.1) return "UP";
-        if (dy > 0.1) return "DOWN";
+
+        if (dy < -0.1) {
+            return "UP";   // 指根在手腕上方 -> 手掌朝上
+        } else if (dy > 0.1) {
+            return "DOWN"; // 指根在手腕下方 -> 手掌朝下
+        }
+        
         return null;
     }
 
+    // 滚动控制器
     function handleScrolling(orientation) {
+        // 重置闪烁状态
         upBtn.classList.remove('flash');
         downBtn.classList.remove('flash');
 
@@ -75,6 +106,7 @@ async function initGestureControl() {
                 activeGesture = "UP";
                 gestureStartTime = Date.now();
             } else if (Date.now() - gestureStartTime > THRESHOLD_MS) {
+                // 向上滚动
                 window.scrollBy({ top: -SCROLL_SPEED, left: 0, behavior: 'instant' });
             }
         } else if (orientation === "DOWN") {
@@ -83,15 +115,18 @@ async function initGestureControl() {
                 activeGesture = "DOWN";
                 gestureStartTime = Date.now();
             } else if (Date.now() - gestureStartTime > THRESHOLD_MS) {
+                // 向下滚动
                 window.scrollBy({ top: SCROLL_SPEED, left: 0, behavior: 'instant' });
             }
         } else {
+            // 没有识别到有效动作，重置状态
             activeGesture = null;
         }
     }
 
     function onResults(results) {
         if (!isActive) return;
+
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         
@@ -101,6 +136,8 @@ async function initGestureControl() {
             for (const landmarks of results.multiHandLandmarks) {
                 window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#ffffff33', lineWidth: 2});
                 window.drawLandmarks(canvasCtx, landmarks, {color: '#00f2ff', lineWidth: 1, radius: 2});
+                
+                // 获取手掌朝向
                 detectedOrientation = getHandOrientation(landmarks);
             }
         }
@@ -111,45 +148,20 @@ async function initGestureControl() {
 
     async function startSystem() {
         try {
-            toggleBtn.innerText = "模型初始化中...";
+            toggleBtn.innerText = "正在加载模型...";
             toggleBtn.style.pointerEvents = "none";
 
+            // 如果还没加载库，先加载
+            if (!window.Hands) {
+                console.log("加载 Mediapipe 库...");
+                await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js");
+                await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
+                await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js");
+            }
+
             if (!hands) {
-                const locateFile = (file) => {
-                    // 支持 chrome.runtime 和 browser.runtime
-                    try {
-                        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
-                            return chrome.runtime.getURL('libs/' + file);
-                        }
-                        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL) {
-                            return browser.runtime.getURL('libs/' + file);
-                        }
-                    } catch (e) {}
-                    if (document.currentScript && document.currentScript.src) {
-                        return document.currentScript.src.replace('gesture.js', '') + 'libs/' + file;
-                    }
-                    return 'libs/' + file;
-                };
-
-                // 先确保底层 wasm/js loader 已经从扩展 libs/ 加载成功
-                async function loadExternalScript(url) {
-                    return new Promise((resolve, reject) => {
-                        const s = document.createElement('script');
-                        s.src = url;
-                        s.crossOrigin = 'anonymous';
-                        s.onload = () => resolve();
-                        s.onerror = () => reject(new Error('Failed to load ' + url));
-                        document.head.appendChild(s);
-                    });
-                }
-
-                // 加载 wasm loader 与 packed assets loader，若加载失败则抛错（避免后续 n is not a function）
-                await loadExternalScript(locateFile('hands_solution_simd_wasm_bin.js'));
-                await loadExternalScript(locateFile('hands_solution_packed_assets_loader.js'));
-
                 hands = new window.Hands({
-                    // 指向插件内部的 libs 文件夹（优先使用 chrome.runtime.getURL）
-                    locateFile: locateFile
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
                 });
                 hands.setOptions({
                     maxNumHands: 1,
@@ -191,8 +203,10 @@ async function initGestureControl() {
         rightPanel.style.display = 'none';
         toggleBtn.innerText = "开启手势控制";
         toggleBtn.classList.remove('active');
-        toggleBtn.style.backgroundColor = "";
-        if (camera) camera.stop();
+        toggleBtn.style.backgroundColor = ""; // 恢复默认颜色
+        if (camera) {
+            camera.stop();
+        }
         activeGesture = null;
         upBtn.classList.remove('flash');
         downBtn.classList.remove('flash');

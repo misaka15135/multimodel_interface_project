@@ -1,0 +1,29 @@
+{
+    "manifest_version": 3,
+    "name": "Gesture Control Ultimate",
+    "version": "3.0",
+    "description": "全局自启动，新增单小拇指退出与中指无名指触发的自由悬停点击交互模式。",
+    "permissions": [
+        "activeTab"
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "css": [
+                "content.css"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle",
+
+            "world": "MAIN"
+
+        }
+    ],
+    "action": {
+        "default_title": "手势增强控制"
+    }
+}

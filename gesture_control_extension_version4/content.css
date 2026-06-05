@@ -1,0 +1,163 @@
+/* 根容器隔离 */
+#gesture-plugin-root {
+    position: fixed;
+    z-index: 9999999;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    pointer-events: none;
+}
+
+/* 左下角控制与调试面板 */
+#gesture-left-panel {
+    position: fixed;
+    bottom: 25px;
+    left: 25px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: auto;
+}
+
+#gesture-debug-window {
+    display: none;
+    border: 2px solid #00f2ff;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #121214;
+    box-shadow: 0 8px 32px rgba(0, 242, 255, 0.15);
+    position: relative;
+    width: 240px;
+    height: 180px;
+}
+
+#gesture-video {
+    display: none;
+}
+
+#gesture-canvas {
+    width: 100%;
+    height: 100%;
+    transform: scaleX(-1);
+    object-fit: cover;
+}
+
+#gesture-toggle-btn {
+    padding: 12px 20px;
+    background: #1e1e24;
+    color: #e2e8f0;
+    border: 1px solid #3f3f46;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: all 0.2s;
+}
+
+#gesture-toggle-btn.active {
+    background: #00f2ff;
+    color: #09090b;
+    border-color: #00f2ff;
+    box-shadow: 0 4px 20px rgba(0, 242, 255, 0.4);
+}
+
+/* 右侧悬浮动作塔 */
+#gesture-right-panel {
+    position: fixed;
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.gesture-action-box {
+    background: rgba(30, 30, 36, 0.85);
+    border: 1px solid #3f3f46;
+    color: #8b949e;
+    padding: 12px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    text-align: center;
+    width: 65px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    backdrop-filter: blur(6px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.gesture-icon {
+    font-size: 20px;
+}
+
+/* 状态1：持续动作识别中，正在倒计时确认（橙色缩放） */
+.gesture-action-box.scaling {
+    transform: scale(0.85);
+    border-color: #f59e0b;
+    color: #f59e0b;
+    box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+}
+
+/* 状态2：动作触发成功（青色放大发光） */
+.gesture-action-box.glowing {
+    transform: scale(1.15);
+    border-color: #00f2ff;
+    background: rgba(0, 242, 255, 0.15);
+    box-shadow: 0 0 20px rgba(0, 242, 255, 0.6), inset 0 0 10px rgba(0, 242, 255, 0.2);
+    color: #00f2ff;
+    font-weight: bold;
+}
+
+/* 状态3：动作触发失败或无效（红色震动） */
+.gesture-action-box.error-glow {
+    border-color: #ef4444;
+    background: rgba(239, 68, 68, 0.15);
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);
+    color: #ef4444;
+}
+
+/* 手指状态条 */
+#finger-status {
+    background: rgba(17, 24, 39, 0.6);
+    border: 1px solid rgba(63, 63, 70, 0.5);
+    padding: 8px;
+    border-radius: 10px;
+    width: 120px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: stretch;
+    backdrop-filter: blur(6px);
+}
+
+.finger-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.finger-label {
+    width: 36px;
+    font-size: 11px;
+    color: #9ca3af;
+    text-align: left;
+}
+
+.finger-bar {
+    flex: 1;
+    height: 8px;
+    background: rgba(55, 65, 81, 0.35);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.finger-fill {
+    width: 0%;
+    height: 100%;
+    background: #374151;
+    transition: width 120ms linear, background 120ms linear;
+    border-radius: 6px;
+}

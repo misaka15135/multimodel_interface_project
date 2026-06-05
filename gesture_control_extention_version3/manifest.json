@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Gesture Control basic",
+  "version": "1.0",
+  "description": "基于MediaPipe的人手姿态识别网页精细控制插件，融合手势滚动、点赞、刷新及视频进度调节。",
+  "permissions": [
+    "activeTab"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["content.css"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ],
+  "action": {
+    "default_title": "手势增强控制已启用"
+  }
+}
