@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "声控助手",
+  "version": "0.3.0",
+  "description": "语音控制浏览器：唤醒词、连续对话、TTS反馈，支持滚动/点赞/评论/缩放/朗读/查找等操作。v0.3 多模态融合接口。",
+  "permissions": ["activeTab", "storage"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["voice-content.css"],
+      "js": [
+        "event-bus.js",
+        "action-registry.js",
+        "llm-client.js",
+        "speech-recognizer.js",
+        "tts-manager.js",
+        "action-executor.js",
+        "ui-manager.js",
+        "voice-controller.js"
+      ]
+    }
+  ]
+}
