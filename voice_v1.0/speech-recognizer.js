@@ -1,7 +1,7 @@
 'use strict';
 
 // ============================================================
-//  SpeechRecognizer — 浏览器语音识别封装 (v0.3)
+//  SpeechRecognizer — 浏览器语音识别封装
 //  生命周期: init() → start() / stop() → dispose()
 //  通过 eventBus 发出 speech:result / speech:error / speech:end
 //  支持持续监听（continuous restart），唤醒词逻辑在 controller 层

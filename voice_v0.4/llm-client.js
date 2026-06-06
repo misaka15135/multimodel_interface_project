@@ -1,9 +1,9 @@
 'use strict';
 
 // ============================================================
-//  LLMClient — DeepSeek API 语义理解 (v0.3)
+//  LLMClient — DeepSeek API 语义理解 (v0.4)
 //  将用户语音文本转化为结构化操作指令
-//  新增：缩放、朗读、查找、翻译、标签页等动作
+//  v0.4：本地匹配器优先，LLM 仅兜底复杂/歧义命令；新增 click_target
 // ============================================================
 window.VoiceExt = window.VoiceExt || {};
 
@@ -30,6 +30,7 @@ window.VoiceExt = window.VoiceExt || {};
 {"action":"read_page"}
 {"action":"stop_reading"}
 {"action":"find","text":"要查找的关键词"}
+{"action":"click_target"}
 {"action":"tab_new"}
 {"action":"stop_listening"}
 {"action":"none","reason":"无法识别的原因"}
@@ -55,6 +56,10 @@ action 说明：
 - find: 在当前页面搜索文字，text 为搜索关键词。
   如"查找人工智能" → {"action":"find","text":"人工智能"}
   "搜索一下联系方式" → {"action":"find","text":"联系方式"}
+
+■ 指代点击（多模态）：
+- click_target: 用户用指代词指向某个目标并要点击，如"点这个""打开它""选中那个""激活这个"。
+  目标位置由手势/眼动模块提供，你只需返回 {"action":"click_target"}。
 
 ■ 标签页：
 - tab_new: 打开新标签页，如"新建标签""打开新页面"

@@ -1,10 +1,11 @@
 'use strict';
 
 // ============================================================
-//  VoiceController — 主控制器 (v0.3)
-//  ★ 唤醒词状态机：PASSIVE → ACTIVE → PASSIVE
-//  ★ 连续对话模式
-//  ★ TTS 语音反馈协调
+//  VoiceController — 主控制器
+//  ★ 混合意图引擎：本地匹配优先，LLM 仅兜底
+//  ★ 上下文记忆：追问 / 撤销 / 重复
+//  ★ 鲁棒性：去重、置信度门、危险动作确认、LLM 失败优雅降级
+//  ★ 多模态融合：发布命令到 MMFusion，"点这个"从手势/眼动解析目标
 // ============================================================
 window.VoiceExt = window.VoiceExt || {};
 
@@ -17,6 +18,9 @@ window.VoiceExt = window.VoiceExt || {};
   const executor = exports.actionExecutor;
   const tts = exports.ttsManager;
   const ui = exports.uiManager;
+  const intentMatcher = exports.intentMatcher;
+  const contextManager = exports.contextManager;
+  const fusion = window.MMFusion || null;   // 融合总线（独立于 VoiceExt 命名空间）
 
   // ============================================================
   //  配置
@@ -26,6 +30,9 @@ window.VoiceExt = window.VoiceExt || {};
   const LOCK_REFRESH_MS = 5000;    // 锁刷新间隔
   const LOCK_STALE_MS = 15000;     // 锁过期时间
   const TAB_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const DEDUP_MS = 1500;           // 同一句识别去重窗口
+  const CONF_MIN = 0.45;           // 置信度下限（仅当上报了 >0 的值时才生效）
+  const CONFIRM_TIMEOUT = 8000;    // 危险动作待确认超时
 
   // ============================================================
   //  状态
@@ -38,9 +45,15 @@ window.VoiceExt = window.VoiceExt || {};
   let unsubscribers = [];
   const externalListeners = [];
 
+  // 鲁棒性状态
+  let lastTranscript = '';
+  let lastTranscriptTs = 0;
+  let pendingConfirm = null;       // { intent, undo, label } —— 等待"是/确认"
+  let confirmTimer = null;
+
   // 同时启动时的竞态保护标志
-  let _acquiring = false;      // 正在执行 acquireLock() 的过程中
-  let _startingAborted = false; // BroadcastChannel 判定我方输，需中止 startListening
+  let _acquiring = false;
+  let _startingAborted = false;
 
   // BroadcastChannel：跨标签即时通信，不存在读写竞态
   const _channel = (() => {
@@ -132,6 +145,13 @@ window.VoiceExt = window.VoiceExt || {};
     ui.setMode(uiMode[newMode] || 'off');
   }
 
+  /** 处理结束后把麦克风 UI 恢复到当前模式 */
+  function restoreMicUi() {
+    if (mode === 'active') setMode('active');
+    else if (mode === 'passive') setMode('passive');
+    else ui.setMicState('idle');
+  }
+
   /** 重置 ACTIVE 超时计时器 */
   function resetActiveTimer() {
     if (activeTimer) clearTimeout(activeTimer);
@@ -171,7 +191,7 @@ window.VoiceExt = window.VoiceExt || {};
   }
 
   // ============================================================
-  //  语音处理核心流程（v0.3 唤醒词版）
+  //  语音处理核心流程（唤醒词 + 混合引擎）
   // ============================================================
 
   async function handleSpeechResult(data) {
@@ -179,35 +199,27 @@ window.VoiceExt = window.VoiceExt || {};
 
     // ====== 唤醒词检测 ======
     if (wakeEnabled) {
-      // 检查是否包含唤醒词
       const wakeIndex = transcript.indexOf(WAKE_WORD);
 
       if (mode === 'idle' || mode === 'passive') {
         if (wakeIndex >= 0) {
-          // 唤醒！
           setMode('active');
           tts.playChime('activate');
           resetActiveTimer();
 
-          // 提取唤醒词之后的命令文本
           const after = transcript.slice(wakeIndex + WAKE_WORD.length).trim();
           if (after.length > 0) {
-            // 有附带命令："小助手往下滚动"
             toast(`已唤醒，执行: "${after}"`);
             await processCommand(after, confidence);
           } else {
-            // 纯唤醒
             toast('我在听，请说指令...');
           }
           return;
         }
-        // PASSIVE 模式下忽略非唤醒词语音
         if (mode === 'passive') return;
-        // IDLE 模式下也不处理（idle = 未点击麦克风）
         return;
       }
 
-      // ACTIVE 模式下检测再次提到唤醒词，重置计时器
       if (mode === 'active' && wakeIndex >= 0) {
         resetActiveTimer();
         const after = transcript.slice(wakeIndex + WAKE_WORD.length).trim();
@@ -228,83 +240,240 @@ window.VoiceExt = window.VoiceExt || {};
       return;
     }
 
-    // 直接监听模式（唤醒词关闭时）
     if (!wakeEnabled && (mode === 'active' || mode === 'passive')) {
       await processCommand(transcript, confidence);
     }
   }
 
+  // ============================================================
+  //  混合意图处理管线
+  // ============================================================
+
   async function processCommand(transcript, confidence) {
+    const now = Date.now();
+
+    // (0) 去重：同一句 1.5s 内重复 → 忽略（Web Speech 偶尔双触发）
+    if (transcript === lastTranscript && now - lastTranscriptTs < DEDUP_MS) return;
+    lastTranscript = transcript;
+    lastTranscriptTs = now;
+
+    // (1) 待确认优先
+    if (pendingConfirm) {
+      const fu = intentMatcher.match(transcript);
+      if (fu && fu.action === '__followup__' && fu.kind === 'confirm') {
+        const pc = pendingConfirm; clearPendingConfirm();
+        toast(`已确认，执行「${pc.label}」`);
+        return await runIntent(pc.intent, pc.undo, transcript, confidence);
+      }
+      if (fu && fu.action === '__followup__' && fu.kind === 'cancel') {
+        clearPendingConfirm();
+        toast('已取消');
+        return;
+      }
+      // 其它话语：取消旧确认，按新指令继续处理
+      clearPendingConfirm();
+    }
+
+    // (2) 置信度门：仅当上报了 >0 的低置信度时才拦截
+    //     （Web Speech zh-CN 经常对正常结果上报 confidence=0，故 0/undefined 绝不拦截）
+    if (typeof confidence === 'number' && confidence > 0 && confidence < CONF_MIN) {
+      tts.playChime('error');
+      toast('没听清，请再说一遍');
+      return;
+    }
+
     toast(`识别: "${transcript}"`);
 
-    if (!apiKey) {
-      errorToast('请先设置 API Key');
-      ui.showSettings();
+    // (3) 本地匹配
+    let intent = intentMatcher.match(transcript);
+
+    // (3a) 追问/控制
+    if (intent && intent.action === '__followup__') {
+      if (intent.kind === 'undo') {
+        const u = contextManager.popUndo();
+        if (!u) { toast('没有可撤销的操作'); return; }
+        try { u.undoFn(); toast(`已撤销：${u.label}`); }
+        catch (_) { errorToast('撤销失败'); }
+        return;
+      }
+      if (intent.kind === 'repeat_last' || intent.kind === 'repeat_dir') {
+        const resolved = contextManager.resolveFollowup(intent.kind);
+        if (!resolved) { toast('没有可重复的指令'); return; }
+        intent = resolved;  // 继续走确认/撤销/执行
+      } else if (intent.kind === 'confirm' || intent.kind === 'cancel') {
+        toast('没有待确认的操作');
+        return;
+      }
+    }
+
+    // (3b) LLM 兜底
+    if (!intent) {
+      if (!apiKey) { errorToast('请先设置 API Key'); ui.showSettings(); return; }
+      ui.setMicState('processing');
+      try {
+        intent = await llmClient.interpret(transcript);
+        intent.source = 'llm';
+      } catch (err) {
+        // 本地没命中 + LLM 出错 → 优雅降级，不崩
+        tts.playChime('error');
+        errorToast('暂时无法理解该指令，请换种说法');
+        restoreMicUi();
+        return;
+      }
+    }
+
+    if (!intent || intent.action === 'none') {
+      toast(`"${transcript}" — 未执行 (${(intent && intent.reason) || '无法识别'})`);
+      restoreMicUi();
       return;
+    }
+
+    // (4) 指代解析（click_target）
+    if (intent.action === 'click_target') {
+      const tgt = resolveDeicticTarget();
+      if (!tgt) {
+        toast('没有可操作的目标，请用手势或注视指向');
+        restoreMicUi();
+        return;
+      }
+      intent.target = tgt;
+    }
+
+    // (5) 危险动作确认门
+    const meta = registry.getMeta(intent.action) || {};
+    if (meta.confirmable) {
+      const undo = contextManager.buildUndo(intent);
+      setPendingConfirm({ intent, undo, label: meta.description || intent.action });
+      tts.speak('confirm', '请确认');
+      toast(`确认要「${meta.description || intent.action}」吗？说"是 / 确认"`);
+      return;
+    }
+
+    // (6) 执行
+    const undo = contextManager.buildUndo(intent);
+    return await runIntent(intent, undo, transcript, confidence);
+  }
+
+  /** 执行一条 intent：仲裁 → pushUndo → execute → record → publish → 反馈 */
+  async function runIntent(intent, undo, transcript, confidence) {
+    // 多模态仲裁：被其他模态抢先/去重则跳过
+    if (fusion) {
+      const verdict = fusion.arbitrate({ action: intent.action, source: 'voice', timestamp: Date.now() });
+      if (!verdict.execute) {
+        console.log('[VoiceExt] 仲裁跳过:', intent.action, verdict.reason, '←', verdict.winner);
+        restoreMicUi();
+        return;
+      }
     }
 
     ui.setMicState('processing');
     try {
-      const intent = await llmClient.interpret(transcript);
-      const info = await executor.execute(intent, { transcript, confidence });
+      if (undo) contextManager.pushUndo(undo.undoFn, undo.label);
+      const info = await executor.execute(intent, { transcript, confidence, source: intent.source });
+      if (!info.ok && undo) contextManager.popUndo();  // 执行失败丢弃撤销项
 
-      // —— TTS 反馈 ——
-      if (intent.action !== 'none' && intent.action !== 'read_page' && intent.action !== 'stop_reading') {
-        tts.speak(intent.action);
-      }
-
-      // —— Toast 反馈 ——
-      if (intent.action === 'none') {
-        toast(`"${transcript}" — 未执行 (${intent.reason || '无法识别'})`);
-      } else if (intent.action === 'comment') {
-        if (info.ok) {
-          toast(`"${transcript}" → <span class="toast-action">评论: ${info.text}</span><br><small>${info.reason}</small>`);
-        } else {
-          errorToast(`评论失败: ${info.reason || '未知'}`);
-        }
-      } else if (intent.action === 'like') {
-        toast(info.ok ? `"${transcript}" → <span class="toast-action">点赞</span>` : `"${transcript}" → 未找到点赞按钮`);
-      } else if (intent.action === 'find') {
-        toast(info.ok ? `<span class="toast-action">${info.reason}</span>` : `未找到`);
-      } else if (intent.action === 'read_page') {
-        toast(info.ok ? `"${transcript}" → <span class="toast-action">开始朗读</span>` : errorToast(info.reason));
-      } else {
-        const labels = {
-          scroll_up: '向上滚动', scroll_down: '向下滚动',
-          scroll_to_top: '回到顶部', scroll_to_bottom: '滚动到底部',
-          refresh: '刷新页面', go_back: '后退', go_forward: '前进',
-          zoom_in: '放大', zoom_out: '缩小', zoom_reset: '恢复缩放',
-          tab_new: '新标签页',
-          stop_listening: '已停止监听', stop_reading: '已停止朗读',
-        };
-        toast(`"${transcript}" → <span class="toast-action">${labels[intent.action] || intent.action}</span>`);
-      }
-
-      // —— 通知外部（多模态融合） ——
-      if (intent.action !== 'none') {
-        notifyExternal(intent, info, { transcript, confidence });
-      }
+      contextManager.record(intent, info, { transcript });
+      publishToFusion(intent, info, { transcript, confidence });
+      notifyExternal(intent, info, { transcript, confidence });
+      feedback(intent, info, transcript);
     } catch (err) {
+      if (undo) contextManager.popUndo();
       tts.playChime('error');
       ui.setMicState('error');
       errorToast(err.message);
-      setTimeout(() => {
-        if (mode === 'active') setMode('active');
-        else if (mode === 'passive') setMode('passive');
-        else ui.setMicState('idle');
-      }, 2000);
+      setTimeout(restoreMicUi, 2000);
+      return;
     }
 
-    // 恢复 UI
-    if (mode === 'active') {
-      setMode('active');
-    } else if (mode === 'passive') {
-      setMode('passive');
+    restoreMicUi();
+  }
+
+  // ---- 确认态管理 ----
+
+  function setPendingConfirm(pc) {
+    pendingConfirm = pc;
+    if (confirmTimer) clearTimeout(confirmTimer);
+    confirmTimer = setTimeout(() => {
+      if (pendingConfirm) { pendingConfirm = null; toast('确认超时，已取消'); restoreMicUi(); }
+    }, CONFIRM_TIMEOUT);
+  }
+  function clearPendingConfirm() {
+    pendingConfirm = null;
+    if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+  }
+
+  // ---- 反馈（TTS + Toast）----
+
+  const ACTION_LABELS = {
+    scroll_up: '向上滚动', scroll_down: '向下滚动',
+    scroll_to_top: '回到顶部', scroll_to_bottom: '滚动到底部',
+    refresh: '刷新页面', go_back: '后退', go_forward: '前进',
+    zoom_in: '放大', zoom_out: '缩小', zoom_reset: '恢复缩放',
+    tab_new: '新标签页',
+    stop_listening: '已停止监听', stop_reading: '已停止朗读',
+    undo: '撤销',
+  };
+  const SOURCE_TAG = { local: '⚡本地', llm: '☁AI', context: '↻上下文' };
+
+  function feedback(intent, info, transcript) {
+    const action = intent.action;
+    // TTS 简短反馈（朗读/停止朗读自身就有声音，不重复播报）
+    if (action !== 'none' && action !== 'read_page' && action !== 'stop_reading') {
+      tts.speak(action);
+    }
+
+    const tag = SOURCE_TAG[intent.source] ? ` <small style="opacity:.6">${SOURCE_TAG[intent.source]}</small>` : '';
+
+    if (action === 'comment') {
+      if (info.ok) toast(`"${transcript}" → <span class="toast-action">评论: ${info.text}</span><br><small>${info.reason}</small>`);
+      else errorToast(`评论失败: ${info.reason || '未知'}`);
+    } else if (action === 'like') {
+      toast(info.ok ? `"${transcript}" → <span class="toast-action">点赞</span>` : `"${transcript}" → 未找到点赞按钮`);
+    } else if (action === 'find') {
+      toast(info.ok ? `<span class="toast-action">${info.reason}</span>${tag}` : `未找到`);
+    } else if (action === 'read_page') {
+      if (info.ok) toast(`"${transcript}" → <span class="toast-action">开始朗读</span>`); else errorToast(info.reason);
+    } else if (action === 'click_target') {
+      toast(info.ok ? `<span class="toast-action">已点击目标</span>${tag}` : `${info.reason}`);
     } else {
-      ui.setMicState('idle');
+      toast(`"${transcript}" → <span class="toast-action">${ACTION_LABELS[action] || action}</span>${tag}`);
     }
   }
 
+  // ---- 指代目标解析（多模态融合）----
+
+  /** 从 MMFusion 共享上下文取「手势指向 / 眼动注视」目标，验证可解析为活元素 */
+  function resolveDeicticTarget() {
+    if (!fusion) return null;
+    const c = fusion.getContext();
+    const t = c.pointerTarget || c.gazeTarget;   // 手势选择优先于眼动注视
+    if (!t) return null;
+    let el = null;
+    if (t.selector) { try { el = document.querySelector(t.selector); } catch (_) {} }
+    if (!el && t.point) el = document.elementFromPoint(t.point.x, t.point.y);
+    if (!el) return null;
+    return Object.assign({}, t, { el });   // 同 world 直接带活 el
+  }
+
+  // ---- 对外发布 ----
+
+  /** 发布到多模态融合总线（跨模态共享） */
+  function publishToFusion(intent, info, context) {
+    if (!fusion) return;
+    const { action, source, target, ...params } = intent;
+    fusion.publish({
+      source: 'voice',
+      type: 'command',
+      action,
+      params,
+      target: target || null,
+      confidence: context.confidence || 0.95,
+      raw: { transcript: context.transcript, ok: !!(info && info.ok) },
+      _live: true,
+    });
+  }
+
+  /** 通知外部监听器（向后兼容的 onEvent API） */
   function notifyExternal(intent, result, context) {
     const { action, ...params } = intent;
     const event = {
@@ -331,7 +500,6 @@ window.VoiceExt = window.VoiceExt || {};
     // 标签页互斥锁
     _acquiring = true;
     _startingAborted = false;
-    // 广播激活意图：让所有已激活的标签页立即关闭，同时启动时用 TAB_ID 决胜
     _channel?.postMessage({ type: 'activate', tabId: TAB_ID });
 
     const acquired = await acquireLock();
@@ -355,6 +523,7 @@ window.VoiceExt = window.VoiceExt || {};
 
   async function stopListening() {
     if (activeTimer) clearTimeout(activeTimer);
+    clearPendingConfirm();
     setMode('idle');
     recognizer.stop();
     await releaseLock();
@@ -375,6 +544,15 @@ window.VoiceExt = window.VoiceExt || {};
 
     // BroadcastChannel：跨标签即时互斥
     if (_channel) _channel.onmessage = _handleChannelMessage;
+
+    // 多模态融合：订阅其他模态事件（仅观察，不重复执行手势自身的 DOM 操作）
+    if (fusion) {
+      const unsub = fusion.subscribe((ev) => {
+        if (!ev || ev.source === 'voice') return;
+        console.log('[VoiceExt] 收到', ev.source, '事件:', ev.type, ev.action || '');
+      });
+      unsubscribers.push(unsub);
+    }
 
     // UI
     sub('ui:mic_clicked', toggleMic);
@@ -398,7 +576,6 @@ window.VoiceExt = window.VoiceExt || {};
     sub('speech:result', handleSpeechResult);
     sub('speech:error', (d) => {
       if (d.silent) return;
-      // 致命错误：直接停掉，不重试
       if (d.fatal) {
         setMode('idle');
         errorToast(d.message || `识别错误: ${d.error}`);
@@ -412,7 +589,7 @@ window.VoiceExt = window.VoiceExt || {};
       }, 2000);
     });
 
-    // 停止（fire-and-forget，不需要 await）
+    // 停止（fire-and-forget）
     sub('voice:stop_requested', () => { stopListening(); });
 
     // TTS 期间暂停/恢复识别
@@ -470,17 +647,19 @@ window.VoiceExt = window.VoiceExt || {};
       await loadApiKey();
       ui.setTtsEnabled(tts.isEnabled());
       ui.setWakeEnabled(wakeEnabled);
-      console.log('[VoiceExt] Controller v0.3 initialized —',
-        registry.list().length, 'actions, wake word:', WAKE_WORD);
+      console.log('[VoiceExt] Controller v1.0 initialized —',
+        registry.list().length, 'actions, wake word:', WAKE_WORD,
+        '| 本地匹配 + LLM 兜底 + 融合:', fusion ? 'on' : 'off');
     },
 
     async dispose() {
-      await stopListening();         // 含 releaseLock
+      await stopListening();
       tts.stop();
       recognizer.dispose();
       for (const u of unsubscribers) u();
       unsubscribers = [];
       externalListeners.length = 0;
+      contextManager.clear();
       ui.dispose();
       registry.clear();
       bus.removeAll();
@@ -507,7 +686,8 @@ window.VoiceExt = window.VoiceExt || {};
         hasApiKey: !!apiKey,
         wakeWord: WAKE_WORD,
         actions: registry.list(),
-        version: '0.3.0',
+        fusion: !!fusion,
+        version: '1.0.0',
       };
     },
   };
@@ -516,9 +696,8 @@ window.VoiceExt = window.VoiceExt || {};
 
   // 自动启动
   controller.init().then(() => {
-    // 设置 TTS 暂停回调：朗读时暂停识别
     recognizer.onShouldPause = () => tts.isSpeaking();
-    console.log('[VoiceExt] 声控助手 v0.3 已就绪 — 点击右下角按钮开始');
+    console.log('[VoiceExt] 声控助手 v1.0 已就绪 — 点击右下角按钮开始');
   });
 
 })(window.VoiceExt);

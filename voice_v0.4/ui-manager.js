@@ -34,7 +34,7 @@ window.VoiceExt = window.VoiceExt || {};
           </div>
           <div class="settings-row">
             <span>唤醒词模式</span>
-            <button id="voice-ext-wake-toggle" class="settings-toggle off" title="说"小助手"激活"></button>
+            <button id="voice-ext-wake-toggle" class="settings-toggle off" title="说&quot;小助手&quot;激活"></button>
           </div>
           <div class="btn-row">
             <button class="btn-cancel" id="voice-ext-cancel">取消</button>

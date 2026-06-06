@@ -1,8 +1,7 @@
 'use strict';
 
 // ============================================================
-//  UIManager — UI 组件管理器 (v0.3)
-//  新增：模式指示灯、TTS 开关、设置面板增强
+//  UIManager — UI 组件（麦克风按钮、模式指示灯、设置面板、Toast）
 // ============================================================
 window.VoiceExt = window.VoiceExt || {};
 
@@ -34,7 +33,7 @@ window.VoiceExt = window.VoiceExt || {};
           </div>
           <div class="settings-row">
             <span>唤醒词模式</span>
-            <button id="voice-ext-wake-toggle" class="settings-toggle off" title="说"小助手"激活"></button>
+            <button id="voice-ext-wake-toggle" class="settings-toggle off" title="说&quot;小助手&quot;激活"></button>
           </div>
           <div class="btn-row">
             <button class="btn-cancel" id="voice-ext-cancel">取消</button>

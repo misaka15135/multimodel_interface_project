@@ -1,9 +1,9 @@
 'use strict';
 
 // ============================================================
-//  ActionExecutor — 动作执行引擎 (v0.3)
+//  ActionExecutor — 动作执行引擎
 //  注册所有内置动作到 actionRegistry，提供 execute() 方法
-//  新增：缩放、朗读、查找、翻译、标签页
+//  meta：confirmable（危险动作需确认）、reversible（可撤销）
 // ============================================================
 window.VoiceExt = window.VoiceExt || {};
 
@@ -46,6 +46,32 @@ window.VoiceExt = window.VoiceExt || {};
       }
     }
     return false;
+  }
+
+  /** 解析跨模态目标描述 → 活元素：优先活 el，其次 selector，再次坐标 */
+  function resolveTargetEl(t) {
+    if (!t) return null;
+    if (t.el && t.el.nodeType === 1) return t.el;
+    if (t.selector) {
+      try { const el = document.querySelector(t.selector); if (el) return el; } catch (_) {}
+    }
+    if (t.point && typeof t.point.x === 'number') {
+      const el = document.elementFromPoint(t.point.x, t.point.y);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  /** 在元素上模拟一次真实点击（复用手势模块的 simulateClick 模式） */
+  function simulateClick(el) {
+    try { el.focus && el.focus(); } catch (_) {}
+    let x = 0, y = 0;
+    try { const r = el.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height / 2; } catch (_) {}
+    ['mousedown', 'mouseup', 'click'].forEach(type => {
+      el.dispatchEvent(new MouseEvent(type, {
+        bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y,
+      }));
+    });
   }
 
   /** 提取页面主要内容文本（用于朗读） */
@@ -172,29 +198,29 @@ window.VoiceExt = window.VoiceExt || {};
   // ============================================================
 
   // — 导航 —
-  registry.register('scroll_up', async (p) => { window.scrollBy({ top: -(p.amount || 300), behavior: 'smooth' }); return { ok: true }; }, { description: '向上滚动', icon: '⬆', category: 'navigation' });
-  registry.register('scroll_down', async (p) => { window.scrollBy({ top: p.amount || 300, behavior: 'smooth' }); return { ok: true }; }, { description: '向下滚动', icon: '⬇', category: 'navigation' });
-  registry.register('scroll_to_top', async () => { window.scrollTo({ top: 0, behavior: 'smooth' }); return { ok: true }; }, { description: '回到顶部', icon: '⏫', category: 'navigation' });
-  registry.register('scroll_to_bottom', async () => { window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return { ok: true }; }, { description: '滚动到底部', icon: '⏬', category: 'navigation' });
-  registry.register('refresh', async () => { location.reload(); return { ok: true }; }, { description: '刷新页面', icon: '🔄', category: 'navigation' });
-  registry.register('go_back', async () => { history.back(); return { ok: true }; }, { description: '后退', icon: '⬅', category: 'navigation' });
-  registry.register('go_forward', async () => { history.forward(); return { ok: true }; }, { description: '前进', icon: '➡', category: 'navigation' });
+  registry.register('scroll_up', async (p) => { window.scrollBy({ top: -(p.amount || 300), behavior: 'smooth' }); return { ok: true }; }, { description: '向上滚动', icon: '⬆', category: 'navigation', reversible: true });
+  registry.register('scroll_down', async (p) => { window.scrollBy({ top: p.amount || 300, behavior: 'smooth' }); return { ok: true }; }, { description: '向下滚动', icon: '⬇', category: 'navigation', reversible: true });
+  registry.register('scroll_to_top', async () => { window.scrollTo({ top: 0, behavior: 'smooth' }); return { ok: true }; }, { description: '回到顶部', icon: '⏫', category: 'navigation', reversible: true });
+  registry.register('scroll_to_bottom', async () => { window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return { ok: true }; }, { description: '滚动到底部', icon: '⏬', category: 'navigation', reversible: true });
+  registry.register('refresh', async () => { location.reload(); return { ok: true }; }, { description: '刷新页面', icon: '🔄', category: 'navigation', confirmable: true });
+  registry.register('go_back', async () => { history.back(); return { ok: true }; }, { description: '后退', icon: '⬅', category: 'navigation', reversible: true });
+  registry.register('go_forward', async () => { history.forward(); return { ok: true }; }, { description: '前进', icon: '➡', category: 'navigation', reversible: true });
 
   // — 缩放 —
   registry.register('zoom_in', async () => {
     const cur = parseFloat(document.body.style.zoom) || 1;
     document.body.style.zoom = Math.min(cur + 0.1, 2.5);
     return { ok: true };
-  }, { description: '放大页面', icon: '🔍', category: 'display' });
+  }, { description: '放大页面', icon: '🔍', category: 'display', reversible: true });
   registry.register('zoom_out', async () => {
     const cur = parseFloat(document.body.style.zoom) || 1;
     document.body.style.zoom = Math.max(cur - 0.1, 0.3);
     return { ok: true };
-  }, { description: '缩小页面', icon: '🔎', category: 'display' });
+  }, { description: '缩小页面', icon: '🔎', category: 'display', reversible: true });
   registry.register('zoom_reset', async () => {
     document.body.style.zoom = 1;
     return { ok: true };
-  }, { description: '恢复缩放', icon: '↩', category: 'display' });
+  }, { description: '恢复缩放', icon: '↩', category: 'display', reversible: true });
 
   // — 朗读 —
   registry.register('read_page', async () => {
@@ -393,7 +419,7 @@ window.VoiceExt = window.VoiceExt || {};
         ? `找到 ${count} 处（${visibleCount} 处可见，已高亮 3 秒）`
         : `找到 ${count} 处，已高亮 3 秒`,
     };
-  }, { description: '页面查找', icon: '🔍', category: 'navigation' });
+  }, { description: '页面查找', icon: '🔍', category: 'navigation', reversible: true });
 
   // — 标签页 —
   registry.register('tab_new', async () => {
@@ -412,9 +438,27 @@ window.VoiceExt = window.VoiceExt || {};
       if (apiResult.ok) return apiResult;
     }
     return await triggerCommentDom(commentText);
-  }, { description: '发表评论', icon: '💬', category: 'social' });
+  }, { description: '发表评论', icon: '💬', category: 'social', confirmable: true });
+
+  // — 多模态融合：指代点击 —
+  // 操作手势/眼动指向的目标。target 由 controller 从 MMFusion 上下文解析后注入。
+  registry.register('click_target', async (p) => {
+    const t = p.target;
+    if (!t) return { ok: false, reason: '没有可操作的目标' };
+    const el = resolveTargetEl(t);
+    if (!el) return { ok: false, reason: '目标已失效' };
+    simulateClick(el);
+    return { ok: true, reason: '已点击指向目标' };
+  }, { description: '点击指向目标', icon: '🎯', category: 'fusion' });
 
   // — 系统 —
+  registry.register('undo', async () => {
+    const cm = exports.contextManager;
+    const u = cm && cm.popUndo();
+    if (!u) return { ok: false, reason: '没有可撤销的操作' };
+    try { u.undoFn(); return { ok: true, reason: '已撤销：' + u.label }; }
+    catch (_) { return { ok: false, reason: '撤销失败' }; }
+  }, { description: '撤销上一步', icon: '↶', category: 'system' });
   registry.register('stop_listening', async () => { bus.emit('voice:stop_requested'); return { ok: true }; }, { description: '停止监听', icon: '⏹', category: 'system' });
   registry.register('none', async (p) => { return { ok: false, reason: p.reason || '无法识别', skipped: true }; }, { description: '（忽略）', icon: '⊘', category: 'system' });
 
