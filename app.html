@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Eye Control</title>
+    <link rel="stylesheet" href="./app.css">
+  </head>
+  <body>
+    <main class="layout">
+      <section class="topbar">
+        <div>
+          <h1>Eye Control</h1>
+          <p id="hintText">小幅转头移动指示点，眨眼点击。</p>
+        </div>
+        <div id="statusBadge" class="status-badge">待启动</div>
+      </section>
+
+      <section class="stage">
+        <div id="stageMessage" class="stage-message">
+          <strong>后台追踪未启动</strong>
+          <span>点击启动后，摄像头会在隐藏页面运行；这里不显示视频预览。</span>
+        </div>
+        <canvas id="overlay"></canvas>
+        <div id="cursor" class="cursor"></div>
+      </section>
+
+      <section class="actions">
+        <button id="startButton" class="primary">启动</button>
+        <button id="calibrateButton" class="secondary" disabled>标定</button>
+      </section>
+
+      <section class="panel">
+        <dl class="metrics">
+          <div><dt>目标</dt><dd id="tabMetric">未连接</dd></div>
+          <div><dt>人脸</dt><dd id="faceMetric">未检测</dd></div>
+          <div><dt>水平</dt><dd id="xMetric">0.00</dd></div>
+          <div><dt>垂直</dt><dd id="yMetric">0.00</dd></div>
+          <div><dt>标定</dt><dd id="calibrationMetric">未开始</dd></div>
+        </dl>
+
+        <div class="toggles">
+          <label class="toggle"><input id="pointerInput" type="checkbox" checked><span>指示点</span></label>
+          <label class="toggle"><input id="blinkClickInput" type="checkbox" checked><span>眨眼点击</span></label>
+          <label class="toggle"><input id="scrollEnabledInput" type="checkbox" checked><span>方向滑动</span></label>
+          <label class="toggle"><input id="clickInput" type="checkbox"><span>驻留点击</span></label>
+        </div>
+
+        <label>
+          <span>头部灵敏度</span>
+          <input id="sensitivityInput" type="range" min="0.35" max="1.25" step="0.05" value="0.68">
+        </label>
+        <label>
+          <span>眨眼点击方式</span>
+          <select id="blinkModeInput">
+            <option value="long" selected>长眨眼</option>
+            <option value="double">双眨眼</option>
+          </select>
+        </label>
+        <label>
+          <span>平滑</span>
+          <input id="smoothingInput" type="range" min="0.03" max="0.18" step="0.01" value="0.06">
+        </label>
+        <label>
+          <span>移动速度</span>
+          <input id="speedInput" type="range" min="0.25" max="1.2" step="0.05" value="0.65">
+        </label>
+        <label>
+          <span>驻留点击(ms)</span>
+          <input id="dwellInput" type="range" min="800" max="2400" step="50" value="1500">
+        </label>
+        <label>
+          <span>滑动速度</span>
+          <input id="scrollInput" type="range" min="20" max="180" step="10" value="60">
+        </label>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
