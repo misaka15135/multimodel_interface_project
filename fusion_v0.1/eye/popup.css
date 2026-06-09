@@ -1,0 +1,45 @@
+body {
+  margin: 0;
+  min-width: 280px;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f4fbfd;
+  color: #0f172a;
+}
+
+.popup {
+  padding: 16px;
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-size: 20px;
+}
+
+p {
+  margin: 0 0 12px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+button {
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: #0e7490;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.toggle {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.status {
+  margin-top: 12px;
+  font-size: 13px;
+}

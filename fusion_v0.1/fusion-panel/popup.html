@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>多模态助手</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="fusion-panel">
+      <header class="panel-header">
+        <h1>🕹️ 多模态助手</h1>
+        <span class="version">v0.1.0</span>
+      </header>
+
+      <!-- 三模态状态条 -->
+      <section class="status-bar">
+        <div class="status-item" id="status-eye">
+          <span class="status-icon">👁️</span>
+          <span class="status-label">眼动</span>
+          <span class="status-dot" id="dot-eye" title="未启动"></span>
+        </div>
+        <div class="status-item" id="status-gesture">
+          <span class="status-icon">🖐️</span>
+          <span class="status-label">手势</span>
+          <span class="status-dot" id="dot-gesture" title="待启动"></span>
+        </div>
+        <div class="status-item" id="status-voice">
+          <span class="status-icon">🎤</span>
+          <span class="status-label">语音</span>
+          <span class="status-dot" id="dot-voice" title="未启动"></span>
+        </div>
+      </section>
+
+      <!-- 眼动控制 -->
+      <section class="card" id="card-eye">
+        <div class="card-header">
+          <h2>👁️ 眼动控制</h2>
+          <span class="card-status" id="eye-status-text">未启动</span>
+        </div>
+        <p class="card-desc">使用摄像头追踪视线，注视目标 + 眨眼点击 + 边缘滚动。</p>
+        <div class="card-actions">
+          <button id="eye-open-btn" class="btn primary">打开控制窗口</button>
+        </div>
+      </section>
+
+      <!-- 手势控制 -->
+      <section class="card" id="card-gesture">
+        <div class="card-header">
+          <h2>🖐️ 手势控制</h2>
+          <span class="card-status" id="gesture-status-text">待启动</span>
+        </div>
+        <p class="card-desc">MediaPipe Hands 识别 11 种手势，自由模式光标悬停点击。</p>
+        <div class="card-actions">
+          <span class="hint">页面加载后自动就绪，点击左下角按钮开启</span>
+        </div>
+      </section>
+
+      <!-- 语音控制 -->
+      <section class="card" id="card-voice">
+        <div class="card-header">
+          <h2>🎤 语音控制</h2>
+          <span class="card-status" id="voice-status-text">未启动</span>
+        </div>
+        <p class="card-desc">唤醒词"小助手"激活，本地命令 0 延迟，LLM 兜底复杂语义。</p>
+        <div class="card-actions">
+          <span class="hint">页面右下角麦克风按钮启动</span>
+        </div>
+      </section>
+
+      <!-- 融合状态 -->
+      <section class="card fusion-state">
+        <div class="card-header">
+          <h2>🔗 融合状态</h2>
+        </div>
+        <dl class="fusion-context">
+          <div class="ctx-row">
+            <dt>pointerTarget</dt>
+            <dd id="ctx-pointer">—</dd>
+          </div>
+          <div class="ctx-row">
+            <dt>gazeTarget</dt>
+            <dd id="ctx-gaze">—</dd>
+          </div>
+          <div class="ctx-row">
+            <dt>最后命令</dt>
+            <dd id="ctx-command">—</dd>
+          </div>
+        </dl>
+      </section>
+
+      <footer class="panel-footer">
+        <span>Point &amp; Speak · HCI 课程项目</span>
+      </footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

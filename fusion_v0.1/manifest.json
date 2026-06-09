@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "多模态交互浏览器助手",
+  "version": "0.1.0",
+  "description": "三模融合浏览器扩展：眼动注视 + 手势选择 + 语音命令 = point & speak 自然交互。HCI 课程项目。",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "tabs",
+    "videoCapture",
+    "offscreen"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "fusion-panel/popup.html",
+    "default_title": "多模态助手"
+  },
+  "background": {
+    "service_worker": "eye/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["voice/voice-content.css"],
+      "js": [
+        "shared/mmfusion-bus.js",
+        "voice/event-bus.js",
+        "voice/action-registry.js",
+        "voice/intent-matcher.js",
+        "voice/llm-client.js",
+        "voice/speech-recognizer.js",
+        "voice/tts-manager.js",
+        "voice/action-executor.js",
+        "voice/context-manager.js",
+        "voice/ui-manager.js",
+        "voice/voice-controller.js",
+        "eye/content-script.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "css": ["gesture/content.css"],
+      "js": [
+        "shared/mmfusion-bus.js",
+        "gesture/gesture-adapter.js",
+        "gesture/content.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  }
+}
