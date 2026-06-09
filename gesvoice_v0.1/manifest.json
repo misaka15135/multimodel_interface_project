@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "GesVoice Fusion Test",
+  "version": "0.1.0",
+  "description": "语音 + 手势融合测试版：保留 voice_v1.0，加入无摄像头手势模拟器和 MMFusion 自动测试探针。",
+  "permissions": ["activeTab", "storage"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["voice-content.css", "gesvoice-simulator.css"],
+      "js": [
+        "mmfusion-bus.js",
+        "event-bus.js",
+        "action-registry.js",
+        "intent-matcher.js",
+        "llm-client.js",
+        "speech-recognizer.js",
+        "tts-manager.js",
+        "action-executor.js",
+        "context-manager.js",
+        "ui-manager.js",
+        "voice-controller.js",
+        "gesvoice-probe.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "mmfusion-bus.js",
+        "gesture-adapter.js",
+        "gesvoice-simulator.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ]
+}

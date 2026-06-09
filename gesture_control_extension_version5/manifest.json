@@ -15,6 +15,8 @@
                 "content.css"
             ],
             "js": [
+                "mmfusion-bus.js",
+                "gesture-adapter.js",
                 "content.js"
             ],
             "run_at": "document_idle",

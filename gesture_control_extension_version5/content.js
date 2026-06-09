@@ -75,6 +75,9 @@ async function initGestureControl() {
     let smoothedCursorX = cursorX, smoothedCursorY = cursorY;
     let lastDwellX = 0, lastDwellY = 0;
     let dwellStartTime = 0;
+    let lastFusionPointerTime = 0;
+    let lastFusionGestureTime = 0;
+    let lastFusionGesture = null;
 
     const cooldowns = { LIKE: 0, REFRESH: 0, VIDEO_SEEK: 0, VIDEO_TOGGLE: 0, NEXT_VID: 0, SPEED: 0 };
 
@@ -190,6 +193,23 @@ async function initGestureControl() {
         }
     }
 
+    function publishFusionGesture(gesture) {
+        if (typeof window.__mmPublishGesture !== 'function') return;
+        const now = Date.now();
+        if (gesture === lastFusionGesture && now - lastFusionGestureTime < 500) return;
+        lastFusionGesture = gesture;
+        lastFusionGestureTime = now;
+        window.__mmPublishGesture(gesture, 0.9);
+    }
+
+    function publishFusionPointer(x, y) {
+        if (typeof window.__mmPublishPointer !== 'function') return;
+        const now = Date.now();
+        if (now - lastFusionPointerTime < 100) return;
+        lastFusionPointerTime = now;
+        window.__mmPublishPointer(x, y);
+    }
+
     function handleContinuous(gesture, boxId, isRepeatable, onConfirm) {
         const now = Date.now();
         const box = boxId ? document.getElementById(boxId) : null;
@@ -201,6 +221,7 @@ async function initGestureControl() {
             if (box) box.classList.add('scaling');
         } else if (now - gestureStartTime > CONTINUOUS_CONFIRM_TIME) {
             if (box && !isRepeatable) { box.classList.remove('scaling'); box.classList.add('glowing'); }
+            publishFusionGesture(gesture);
             onConfirm();
             if (!isRepeatable) {
                 activeGesture = "COOLDOWN";
@@ -261,6 +282,7 @@ async function initGestureControl() {
 
         cursorEl.style.left = smoothedCursorX + 'px';
         cursorEl.style.top = smoothedCursorY + 'px';
+        publishFusionPointer(smoothedCursorX, smoothedCursorY);
 
         const dist = Math.hypot(smoothedCursorX - lastDwellX, smoothedCursorY - lastDwellY);
         const now = Date.now();
