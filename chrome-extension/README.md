@@ -1,4 +1,4 @@
-# Eye Control Chrome Extension
+# Head Control Chrome Extension
 
 这是一个基于 MediaPipe Face Landmarker 的 Chrome 扩展原型。当前版本使用“头部方向控制”为主：
 

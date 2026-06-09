@@ -1,225 +1,269 @@
 /* ============================================================
-   Voice Ext v0.3 — 样式表
-   新增：模式指示灯、TTS开关、唤醒词激活动画
+   Voice Ext v0.3 — 统一视觉风格
+   统一为 gesture_control_extension_version5 玻璃质感风格。
    ============================================================ */
 
 #voice-ext-container {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
+  bottom: 18px;
+  right: 18px;
   z-index: 2147483646;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 14px;
-}
-
-/* ---- 主按钮（麦克风） ---- */
-#voice-ext-mic-btn {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  border: 2px solid #4a90d9;
-  background: #fff;
-  color: #4a90d9;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-  transition: all 0.25s;
+  color: #0f172a;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 10px;
+}
+
+#voice-ext-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(14, 116, 144, 0.12);
+  box-shadow: 0 20px 40px rgba(14, 116, 144, 0.12);
+  pointer-events: none;
+  z-index: -1;
+}
+
+#voice-ext-mic-btn {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  border: none;
+  background: linear-gradient(180deg, rgba(14, 116, 144, 0.12), rgba(14, 116, 144, 0.02));
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 700;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 16px 36px rgba(14, 116, 144, 0.12);
+  transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
   position: relative;
-  z-index: 2;
 }
+
 #voice-ext-mic-btn:hover {
-  box-shadow: 0 4px 18px rgba(0,0,0,0.25);
-  transform: scale(1.05);
+  transform: translateY(-1px);
 }
 
-/* 状态颜色 */
-#voice-ext-mic-btn.idle       { border-color: #999; color: #999; }
-#voice-ext-mic-btn.listening  { border-color: #4caf50; color: #4caf50; background: #e8f5e9; animation: voice-ext-pulse 1.2s infinite; }
-#voice-ext-mic-btn.processing { border-color: #2196f3; color: #2196f3; background: #e3f2fd; }
-#voice-ext-mic-btn.error      { border-color: #f44336; color: #f44336; background: #ffebee; }
-/* 待机模式（仅唤醒词） */
-#voice-ext-mic-btn.passive    { border-color: #03a9f4; color: #03a9f4; background: #e1f5fe; }
-/* 激活模式（可发命令） */
-#voice-ext-mic-btn.active     { border-color: #4caf50; color: #4caf50; background: #e8f5e9; animation: voice-ext-active-pulse 1.5s infinite; }
-
-@keyframes voice-ext-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(76,175,80,0.5); }
-  50%      { box-shadow: 0 0 0 12px rgba(76,175,80,0); }
-}
-@keyframes voice-ext-active-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(3,169,244,0.5); }
-  50%      { box-shadow: 0 0 0 14px rgba(3,169,244,0); }
+#voice-ext-mic-btn.idle {
+  color: #475569;
 }
 
-/* ---- 模式指示灯 ---- */
+#voice-ext-mic-btn.listening {
+  color: #0e7490;
+  background: rgba(14, 116, 144, 0.16);
+  box-shadow: 0 18px 40px rgba(14, 116, 144, 0.18);
+}
+
+#voice-ext-mic-btn.processing {
+  color: #0e7490;
+  background: rgba(14, 116, 144, 0.12);
+}
+
+#voice-ext-mic-btn.error {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+#voice-ext-mic-btn.passive {
+  color: #0e7490;
+  background: rgba(14, 116, 144, 0.10);
+}
+
+#voice-ext-mic-btn.active {
+  color: #059669;
+  background: rgba(6, 182, 212, 0.15);
+}
+
 #voice-ext-mode-indicator {
   position: absolute;
-  top: -4px;
-  left: -4px;
-  width: 12px;
-  height: 12px;
+  top: 6px;
+  left: 6px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  border: 2px solid #fff;
-  z-index: 4;
-  transition: background-color 0.3s;
-}
-#voice-ext-mode-indicator.passive { background: #03a9f4; box-shadow: 0 0 6px rgba(3,169,244,0.6); }
-#voice-ext-mode-indicator.active  { background: #4caf50; box-shadow: 0 0 8px rgba(76,175,80,0.7); animation: indicator-glow 0.8s infinite alternate; }
-
-@keyframes indicator-glow {
-  from { box-shadow: 0 0 4px rgba(76,175,80,0.5); }
-  to   { box-shadow: 0 0 12px rgba(76,175,80,0.9); }
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 10px rgba(14, 116, 144, 0.35);
+  transition: background-color 0.3s, box-shadow 0.3s;
 }
 
-/* ---- 设置面板 ---- */
+#voice-ext-mode-indicator.passive {
+  background: #0e7490;
+}
+
+#voice-ext-mode-indicator.active {
+  background: #059669;
+  box-shadow: 0 0 12px rgba(37, 99, 235, 0.45);
+}
+
+#voice-ext-gear-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 14px;
+  border: 1px solid rgba(14, 116, 144, 0.16);
+  background: rgba(255, 255, 255, 0.88);
+  color: #0f172a;
+  font-size: 14px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 12px 28px rgba(14, 116, 144, 0.12);
+  transition: transform 0.2s, border-color 0.2s;
+}
+
+#voice-ext-gear-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(14, 116, 144, 0.28);
+}
+
 #voice-ext-settings {
   position: absolute;
-  bottom: 68px;
   right: 0;
-  width: 280px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.18);
-  padding: 16px;
+  bottom: 82px;
+  width: 320px;
+  padding: 18px;
   display: none;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(14, 116, 144, 0.14);
+  box-shadow: 0 20px 40px rgba(14, 116, 144, 0.16);
+  backdrop-filter: blur(18px);
   z-index: 1;
 }
+
 #voice-ext-settings.show {
   display: flex;
 }
+
 #voice-ext-settings label {
-  font-size: 12px;
-  color: #666;
-  font-weight: 600;
+  font-size: 13px;
+  color: #475569;
+  font-weight: 700;
 }
+
 #voice-ext-settings input {
   width: 100%;
-  padding: 8px 10px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  font-size: 13px;
-  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(14, 116, 144, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 14px;
+  color: #0f172a;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
+
 #voice-ext-settings input:focus {
-  border-color: #4a90d9;
+  border-color: rgba(14, 116, 144, 0.35);
+  box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.08);
 }
+
 #voice-ext-settings .btn-row {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   justify-content: flex-end;
 }
+
 #voice-ext-settings button {
-  padding: 6px 14px;
+  min-width: 100px;
+  padding: 10px 14px;
+  border-radius: 12px;
   border: none;
-  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
 }
+
 #voice-ext-settings .btn-save {
-  background: #4a90d9;
+  background: #0e7490;
   color: #fff;
 }
-#voice-ext-settings .btn-save:hover { background: #3a7bc8; }
-#voice-ext-settings .btn-cancel {
-  background: #eee;
-  color: #333;
-}
-#voice-ext-settings .btn-cancel:hover { background: #ddd; }
 
-/* 设置面板中的开关行 */
+#voice-ext-settings .btn-cancel {
+  background: rgba(14, 116, 144, 0.08);
+  color: #0f172a;
+}
+
 .settings-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 0;
+  gap: 12px;
 }
+
 .settings-row span {
   font-size: 13px;
-  color: #333;
+  color: #334155;
 }
+
 .settings-toggle {
   width: 44px;
-  height: 24px;
-  border-radius: 12px;
+  height: 26px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.28);
+  position: relative;
   border: none;
   cursor: pointer;
-  transition: background 0.2s;
-  position: relative;
+  transition: background 0.25s;
 }
-.settings-toggle.on  { background: #4caf50; }
-.settings-toggle.off { background: #ccc; }
+
 .settings-toggle::after {
   content: '';
   position: absolute;
-  top: 2px;
-  left: 2px;
+  top: 3px;
+  left: 3px;
   width: 20px;
   height: 20px;
   border-radius: 50%;
   background: #fff;
-  transition: transform 0.2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.12);
+  transition: transform 0.25s;
 }
-.settings-toggle.on::after  { transform: translateX(20px); }
-.settings-toggle.off::after { transform: translateX(0); }
 
-/* ---- 设置齿轮按钮 ---- */
-#voice-ext-gear-btn {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 1px solid #ddd;
-  background: #fff;
-  color: #999;
-  font-size: 12px;
-  cursor: pointer;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
+.settings-toggle.on {
+  background: rgba(16, 185, 129, 0.22);
 }
-#voice-ext-gear-btn:hover { color: #333; border-color: #999; }
 
-/* ---- Toast 提示 ---- */
+.settings-toggle.on::after {
+  transform: translateX(18px);
+}
+
 #voice-ext-toast {
   position: absolute;
-  bottom: 68px;
   right: 0;
-  min-width: 180px;
-  max-width: 300px;
-  background: rgba(0,0,0,0.82);
-  color: #fff;
-  border-radius: 8px;
-  padding: 10px 14px;
+  bottom: 72px;
+  min-width: 220px;
+  max-width: 340px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
   font-size: 13px;
   line-height: 1.5;
   opacity: 0;
-  transform: translateY(8px);
-  transition: all 0.25s;
+  transform: translateY(12px);
+  transition: opacity 0.2s, transform 0.2s;
   pointer-events: none;
-  z-index: 0;
 }
+
 #voice-ext-toast.show {
   opacity: 1;
   transform: translateY(0);
 }
+
 #voice-ext-toast .toast-action {
-  color: #8bc34a;
-  font-weight: 600;
+  color: #7dd3fc;
+  font-weight: 700;
 }
+
 #voice-ext-toast .toast-error {
-  color: #ff6e6e;
+  color: #fecaca;
 }

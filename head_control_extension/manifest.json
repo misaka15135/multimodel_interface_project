@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Gesture Control Ultimate",
-    "version": "3.0",
-    "description": "全局自启动，新增单小拇指退出与中指无名指触发的自由悬停点击交互模式。",
+    "name": "Head Control Ultimate",
+    "version": "1.0",
+    "description": "全局自启动，带有悬浮预览面板与动作状态反馈的头部滚动增强插件。",
     "permissions": [
         "activeTab"
     ],
@@ -12,18 +12,16 @@
                 "<all_urls>"
             ],
             "css": [
-                "ges_content.css"
+                "head_content.css"
             ],
             "js": [
-                "ges_content.js"
+                "head_content.js"
             ],
             "run_at": "document_idle",
-
             "world": "MAIN"
-
         }
     ],
     "action": {
-        "default_title": "手势增强控制"
+        "default_title": "头部控制增强"
     }
 }

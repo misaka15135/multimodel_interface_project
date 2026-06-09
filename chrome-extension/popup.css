@@ -1,49 +1,69 @@
-/* 工具栏 popup 的样式。它只是入口，所以界面保持简单。 */
+/* 工具栏 popup 统一风格 */
 body {
   margin: 0;
-  min-width: 280px;
+  min-width: 300px;
   font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: #f4fbfd;
+  background: #eff8fb;
   color: #0f172a;
 }
 
 .popup {
-  /* 小弹窗内容区。 */
-  padding: 16px;
+  padding: 18px;
+  display: grid;
+  gap: 16px;
 }
 
 h1 {
-  margin: 0 0 10px;
+  margin: 0;
   font-size: 20px;
+  color: #0f172a;
 }
 
 p {
-  margin: 0 0 12px;
-  line-height: 1.5;
+  margin: 0;
+  line-height: 1.6;
   color: #475569;
+  font-size: 14px;
 }
 
 button {
-  /* 打开右下角控制窗口的主按钮。 */
   width: 100%;
   padding: 12px 14px;
-  border: 0;
-  border-radius: 10px;
+  border: none;
+  border-radius: 14px;
   background: #0e7490;
   color: #fff;
   font: inherit;
+  font-weight: 700;
   cursor: pointer;
+  box-shadow: 0 14px 28px rgba(14, 116, 144, 0.16);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  background: #155e75;
 }
 
 .toggle {
-  /* 预留总开关：用于展示和保存“网页控制是否启用”的状态。 */
   display: flex;
   gap: 10px;
   align-items: center;
   margin-top: 14px;
 }
 
+.toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.toggle span {
+  font-size: 14px;
+  color: #334155;
+}
+
 .status {
   margin-top: 12px;
   font-size: 13px;
+  color: #475569;
 }
