@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "GesVoice Fusion Test v0.3",
+  "version": "0.3.0",
+  "description": "语音 + 手势统一执行路径：手势命令不再独立操作DOM，而是送入语音侧 runIntent 管线，享受同一套仲裁/去重/撤销/记录/反馈。",
+  "permissions": ["activeTab", "storage"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["voice-content.css", "gesvoice-simulator.css"],
+      "js": [
+        "mmfusion-bus.js",
+        "event-bus.js",
+        "action-registry.js",
+        "intent-matcher.js",
+        "llm-client.js",
+        "speech-recognizer.js",
+        "tts-manager.js",
+        "action-executor.js",
+        "context-manager.js",
+        "ui-manager.js",
+        "voice-controller.js",
+        "gesvoice-probe.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "mmfusion-bus.js",
+        "gesture-adapter.js",
+        "gesvoice-simulator.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ]
+}
