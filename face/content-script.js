@@ -1,3 +1,7 @@
+// 幂等守卫：manifest 已注入，防止 service-worker 的 ensureContentScript 二次注入
+if (window.__eyeContentScriptInjected) return;
+window.__eyeContentScriptInjected = true;
+
 let marker;
 let ring;
 let dot;

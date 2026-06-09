@@ -62,11 +62,31 @@ window.VoiceExt = window.VoiceExt || {};
     return null;
   }
 
-  /** 在元素上模拟一次真实点击（复用手势模块的 simulateClick 模式） */
+  /** 从元素出发向上找最近的可点击祖先（<a>, <button>, [role=button], [onclick]），限深 5 层 */
+  function nearestClickable(el) {
+    if (!el || el === document.body || el === document.documentElement) return null;
+    let node = el;
+    for (let d = 0; d < 5 && node && node !== document.body; d++) {
+      const tag = node.tagName ? node.tagName.toLowerCase() : '';
+      if (tag === 'a' || tag === 'button' || tag === 'input' || tag === 'select' || tag === 'textarea') return node;
+      if (node.getAttribute && (node.getAttribute('role') === 'button' || node.getAttribute('onclick'))) return node;
+      try {
+        const style = window.getComputedStyle(node);
+        if (style && style.cursor === 'pointer') return node;
+      } catch (_) {}
+      node = node.parentElement;
+    }
+    return el; // 找不到就返回原始元素
+  }
+
+  /** 在元素上模拟一次真实点击：原生 .click() 优先（触发默认行为），dispatchEvent 兜底（兼容 React 事件委托） */
   function simulateClick(el) {
     try { el.focus && el.focus(); } catch (_) {}
     let x = 0, y = 0;
     try { const r = el.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height / 2; } catch (_) {}
+    // 原生 click() 能触发链接跳转、表单提交等默认行为
+    try { el.click(); } catch (_) {}
+    // 额外 dispatchEvent：有些框架（React）在根节点委托，需要事件冒泡
     ['mousedown', 'mouseup', 'click'].forEach(type => {
       el.dispatchEvent(new MouseEvent(type, {
         bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y,
@@ -445,8 +465,9 @@ window.VoiceExt = window.VoiceExt || {};
   registry.register('click_target', async (p) => {
     const t = p.target;
     if (!t) return { ok: false, reason: '没有可操作的目标' };
-    const el = resolveTargetEl(t);
+    let el = resolveTargetEl(t);
     if (!el) return { ok: false, reason: '目标已失效' };
+    el = nearestClickable(el);  // 往上找真正可点击的包装元素
     simulateClick(el);
     return { ok: true, reason: '已点击指向目标' };
   }, { description: '点击指向目标', icon: '🎯', category: 'fusion' });
