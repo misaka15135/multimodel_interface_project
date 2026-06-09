@@ -1,0 +1,49 @@
+/* 工具栏 popup 的样式。它只是入口，所以界面保持简单。 */
+body {
+  margin: 0;
+  min-width: 280px;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f4fbfd;
+  color: #0f172a;
+}
+
+.popup {
+  /* 小弹窗内容区。 */
+  padding: 16px;
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-size: 20px;
+}
+
+p {
+  margin: 0 0 12px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+button {
+  /* 打开右下角控制窗口的主按钮。 */
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: #0e7490;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.toggle {
+  /* 预留总开关：用于展示和保存“网页控制是否启用”的状态。 */
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.status {
+  margin-top: 12px;
+  font-size: 13px;
+}

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Eye Control Offscreen</title>
+  </head>
+  <body>
+    <!--
+      隐藏追踪页：由 service-worker.js 通过 chrome.offscreen.createDocument 创建。
+      这个 video 不给用户看，只作为 MediaPipe FaceLandmarker 的输入画面。
+    -->
+    <video id="video" autoplay playsinline muted></video>
+    <script type="module" src="./offscreen.js"></script>
+  </body>
+</html>

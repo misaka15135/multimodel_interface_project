@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Eye Control Extension</title>
+    <link rel="stylesheet" href="./app-shell.css">
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Chrome Extension</p>
+          <h1>眼动网页控制</h1>
+          <p class="summary">这个页面负责摄像头、校准和 gaze 追踪，扩展会把结果发到当前活动标签页执行高亮、点击和滚动。</p>
+        </div>
+        <div class="actions">
+          <button id="startButton" class="primary">启动摄像头</button>
+          <button id="calibrateButton" class="secondary" disabled>开始校准</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <div class="stage">
+          <iframe id="sandboxFrame" src="./gaze-sandbox.html"></iframe>
+          <div id="statusBadge" class="status-badge">待启动</div>
+        </div>
+        <aside class="panel">
+          <h2>状态</h2>
+          <dl class="metrics">
+            <div><dt>活动标签</dt><dd id="tabMetric">未连接</dd></div>
+            <div><dt>水平</dt><dd id="xMetric">0.00</dd></div>
+            <div><dt>垂直</dt><dd id="yMetric">0.00</dd></div>
+            <div><dt>校准</dt><dd id="calibrationMetric">未开始</dd></div>
+          </dl>
+          <label>
+            <span>驻留点击(ms)</span>
+            <input id="dwellInput" type="range" min="500" max="1800" step="50" value="950">
+          </label>
+          <label>
+            <span>自动滚动速度</span>
+            <input id="scrollInput" type="range" min="40" max="280" step="20" value="120">
+          </label>
+          <p id="hintText" class="hint">打开任意网页后回到这里启动摄像头。注视网页顶部和底部附近时会滚动。</p>
+        </aside>
+      </section>
+    </main>
+    <script src="./app-shell.js"></script>
+  </body>
+</html>
