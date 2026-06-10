@@ -1,5 +1,6 @@
 /* ============================================================
    Voice Ext v0.3 — 统一视觉风格
+   统一为 gesture_control_extension_version5 玻璃质感风格。
    ============================================================ */
 
 #voice-ext-container {
@@ -232,7 +233,7 @@
 }
 
 .settings-toggle.on::after {
-    transform: translateX(px);
+    transform: translateX(18px);
 }
 
 #voice-ext-toast {

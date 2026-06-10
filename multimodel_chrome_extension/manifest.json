@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Hybrid Gesture & Head Control",
-    "version": "4.0",
-    "description": "集成了手势与头部追踪的混合控制扩展，V字手势切换模式，支持头部偏航控制视频进度。",
+    "name": "Multimodel Control Extension",
+    "version": "1.0",
+    "description": "集成了手势与头部追踪以及语音控制的混合控制扩展",
     "permissions": [
         "activeTab"
     ],
