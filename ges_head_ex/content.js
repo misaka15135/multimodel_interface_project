@@ -111,6 +111,9 @@ async function initHybridControl() {
     let lastPitchState = "CENTERED";
     let nodTimes = [];
 
+    let lastYawState = "CENTERED"; // 新增：记录上一次的偏航状态
+    let shakeTimes = [];           // 新增：记录摇头的时间戳数组
+
     // 预设UI边界线
     document.getElementById('pitch-bound-up').style.top = `${((EDGE_UP - RATIO_P_MIN) / RATIO_P_RANGE) * 100}%`;
     document.getElementById('pitch-bound-down').style.top = `${((EDGE_DOWN - RATIO_P_MIN) / RATIO_P_RANGE) * 100}%`;
@@ -267,6 +270,9 @@ async function initHybridControl() {
     }
 
     function recognizeGesture(landmarks) {
+        // 第一时间拦截：如果是头控模式，彻底屏蔽所有手势的输出，防止状态死锁
+        if (currentMode === "HEAD") return "NONE";
+
         const thumbEx = isFingerExtended(landmarks, 4, 2);
         const indexEx = isFingerExtended(landmarks, 8, 5);
         const middleEx = isFingerExtended(landmarks, 12, 9);
@@ -274,19 +280,15 @@ async function initHybridControl() {
         const pinkyEx = isFingerExtended(landmarks, 20, 17);
 
         if (indexEx && middleEx && !ringEx && !pinkyEx) return "V_SIGN";
-        if (currentMode === "HEAD") return "NONE"; // 头控模式屏蔽其它手势
 
         if (!indexEx && !middleEx && !ringEx && pinkyEx) return "PINKY_ONLY";
         if (!indexEx && middleEx && ringEx && !pinkyEx) return "FREE_MODE_TOGGLE";
 
-        // 恢复：点赞
         if (!indexEx && !middleEx && ringEx && !pinkyEx) {
             if (landmarks[4].y < landmarks[3].y && landmarks[4].y < landmarks[2].y) return "RINGS_UP";
         }
-        // 恢复：倍速
         if (indexEx && !middleEx && !ringEx && pinkyEx) return "HORNS";
-        // 恢复：刷新 (竖起大拇指)
-        if (indexEx && middleEx && ringEx && !pinkyEx) return "THREE_UP";
+        if (thumbEx && !indexEx && !middleEx && !ringEx && !pinkyEx) return "THUMBS_UP";
 
         if (indexEx && middleEx && ringEx && pinkyEx) {
             const dy = landmarks[9].y - landmarks[0].y;
@@ -364,33 +366,57 @@ async function initHybridControl() {
         const yawRatio = (nose.x - eyeCenterX) / faceWidth;
         updateYawIndicator(yawRatio);
 
-        // 判定姿态基础
+        // 1. 判定俯仰状态（上下）
         let currentPitchState = "CENTERED";
         if (pitchRatio < EDGE_UP) currentPitchState = "HEAD_UP";
         else if (pitchRatio > EDGE_DOWN) currentPitchState = "HEAD_DOWN";
 
-        // === 核心：两次快速点头判定 (双击点赞) ===
+        // 点头判定
         if (lastPitchState !== "HEAD_DOWN" && currentPitchState === "HEAD_DOWN") {
             const now = Date.now();
             nodTimes.push(now);
-            nodTimes = nodTimes.filter(t => now - t < 1000); // 只保留1秒内的记录
+            nodTimes = nodTimes.filter(t => now - t < 1000);
             if (nodTimes.length >= 2) {
-                nodTimes = []; // 触发后清空
+                nodTimes = [];
                 lastPitchState = currentPitchState;
-                return "DOUBLE_NOD"; // 发出独立指令
+                return "DOUBLE_NOD";
             }
         }
         lastPitchState = currentPitchState;
 
-        // 常规优先级返回
-        if (yawRatio > EDGE_YAW_LEFT) return "HEAD_YAW_LEFT";
-        if (yawRatio < EDGE_YAW_RIGHT) return "HEAD_YAW_RIGHT";
+        // 2. 判定偏航状态（左右）
+        let currentYawState = "CENTERED";
+        if (yawRatio > EDGE_YAW_LEFT) currentYawState = "HEAD_YAW_LEFT";
+        else if (yawRatio < EDGE_YAW_RIGHT) currentYawState = "HEAD_YAW_RIGHT";
+
+        // === 核心新增：两次快速摇头判定（连续3次跨越边缘，如：左->右->左） ===
+        if (lastYawState !== currentYawState && currentYawState !== "CENTERED") {
+            const now = Date.now();
+            shakeTimes.push(now);
+            shakeTimes = shakeTimes.filter(t => now - t < 1200); // 1.2秒窗口期
+            if (shakeTimes.length >= 3) {
+                shakeTimes = [];
+                lastYawState = currentYawState;
+                return "DOUBLE_SHAKE"; // 发出独立摇头信号
+            }
+        }
+        lastYawState = currentYawState;
+
+        // 3. 常规优先级返回
+        if (currentYawState !== "CENTERED") return currentYawState;
         return currentPitchState;
     }
 
     // ================= 动作执行路由器 =================
     function executeAction(gesture) {
         const now = Date.now();
+
+        // === 新增：快速摇头退出头控模式 ===
+        if (gesture === "DOUBLE_SHAKE" && currentMode === "HEAD") {
+            switchMode("HAND");
+            triggerInstantUI("box-mode-toggle", true); // 让右侧切模式盒子闪烁青光反馈
+            return;
+        }
 
         // 处理瞬发型的快速双击点头
         if (gesture === "DOUBLE_NOD") {
@@ -402,14 +428,18 @@ async function initHybridControl() {
             return;
         }
 
+        // 修改：V字手势现在只负责【进入】头控模式
         if (gesture === "V_SIGN") {
             handleContinuous(gesture, GESTURE_BOX_MAP[gesture], false, () => {
-                switchMode(currentMode === "HAND" ? "HEAD" : "HAND");
+                if (currentMode === "HAND") {
+                    switchMode("HEAD");
+                }
             });
             return;
         }
 
-        if (activeGesture && activeGesture !== gesture && ["PALM_UP", "PALM_DOWN", "HEAD_UP", "HEAD_DOWN", "V_SIGN", "FREE_MODE_TOGGLE"].includes(activeGesture)) {
+        // 下方的打断列表同步加上 "DOUBLE_SHAKE" 避免死锁
+        if (activeGesture && activeGesture !== gesture && ["PALM_UP", "PALM_DOWN", "HEAD_UP", "HEAD_DOWN", "V_SIGN", "FREE_MODE_TOGGLE", "THUMBS_UP", "DOUBLE_SHAKE"].includes(activeGesture)) {
             resetUIState(); activeGesture = null;
         }
 
@@ -423,17 +453,16 @@ async function initHybridControl() {
             if (gesture === "PALM_DOWN") return handleContinuous(gesture, "box-scroll-down", true, () => window.scrollBy({ top: SCROLL_SPEED, left: 0, behavior: 'instant' }));
             if (gesture === "PINKY_ONLY") return handleContinuous(gesture, "box-stop", false, stopSystem);
             if (gesture === "FREE_MODE_TOGGLE") return handleContinuous(gesture, "box-free-mode", false, () => { isFreeMode = true; cursorEl.style.display = 'block'; updateActionBoxStates(); triggerInstantUI("box-free-mode", true); dwellStartTime = now; });
+            if (gesture === "THREE_UP") return handleContinuous(gesture, "box-refresh", false, () => { location.reload(); });
 
             const boxId = GESTURE_BOX_MAP[gesture];
             if (gesture === "POINT_RIGHT" && now > cooldowns.VIDEO_SEEK) { adjustVideoTime(5); triggerInstantUI(boxId, true); cooldowns.VIDEO_SEEK = now + 400; }
             if (gesture === "POINT_LEFT" && now > cooldowns.VIDEO_SEEK) { adjustVideoTime(-5); triggerInstantUI(boxId, true); cooldowns.VIDEO_SEEK = now + 400; }
             if (gesture === "MIDDLE" && now > cooldowns.VIDEO_TOGGLE) { togglePlayPause(); triggerInstantUI(boxId, true); cooldowns.VIDEO_TOGGLE = now + 1000; }
-
-            // 执行手势恢复模块
             if (gesture === "RINGS_UP" && now > cooldowns.LIKE) { triggerPageLike(); triggerInstantUI(boxId, true); cooldowns.LIKE = now + 2000; }
             if (gesture === "HORNS" && now > cooldowns.SPEED) { toggleSpeed(); triggerInstantUI(boxId, true); cooldowns.SPEED = now + 1500; }
             if (gesture === "THREE_UP" && now > cooldowns.REFRESH) { triggerInstantUI(boxId, true); cooldowns.REFRESH = now + 5000; setTimeout(() => location.reload(), 600); }
-
+            
         } else if (currentMode === "HEAD") {
             // 使用 behavior: 'instant' 和超短确认延迟(150ms)，实现和手势一样丝滑流畅的连续翻页
             if (gesture === "HEAD_UP") return handleContinuous(gesture, "box-scroll-up", true, () => window.scrollBy({ top: -SCROLL_SPEED, left: 0, behavior: 'instant' }), 150);
@@ -492,18 +521,24 @@ async function initHybridControl() {
                         window.drawConnectors(canvasCtx, lm, window.FACEMESH_TESSELATION, { color: 'rgba(255,255,255,0.1)', lineWidth: 1 });
                         headGesture = analyzeHeadPosture(lm);
                     } else {
-                        updatePitchIndicator(0); updateYawIndicator(0); lastPitchState = "CENTERED";
+                        // 丢失人脸时，不仅重置指示器，也要重置姿态状态变量
+                        updatePitchIndicator(0); updateYawIndicator(0);
+                        lastPitchState = "CENTERED"; lastYawState = "CENTERED";
                     }
                     canvasCtx.restore();
-                    if (activeGesture !== "V_SIGN" && headGesture !== "CENTERED") executeAction(headGesture);
+                    // 解除封印：不再判断 activeGesture，只要头动了就直接发送动作
+                    if (headGesture !== "CENTERED") executeAction(headGesture);
                 });
             }
-
             camera = new window.Camera(videoElement, {
                 onFrame: async () => {
                     if (isActive) {
-                        await hands.send({ image: videoElement });
-                        if (currentMode === "HEAD") await faceMesh.send({ image: videoElement });
+                        // 物理隔离级别的优化：手控模式只送入手部模型，头控模式只送入头部模型
+                        if (currentMode === "HAND") {
+                            await hands.send({ image: videoElement });
+                        } else if (currentMode === "HEAD") {
+                            await faceMesh.send({ image: videoElement });
+                        }
                     }
                 }, width: 320, height: 240
             });

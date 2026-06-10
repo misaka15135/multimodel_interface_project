@@ -292,3 +292,32 @@
     background: rgba(239, 68, 68, 0.15);
     color: #ef4444;
 }
+
+/* 新增：嘴巴张开程度指示条 */
+.mouth-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(55, 65, 81, 0.35);
+    border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+}
+
+#mouth-indicator {
+    position: absolute;
+    height: 100%;
+    width: 0%;
+    background: #10b981;
+    left: 0;
+    transition: width 0.1s linear, background 0.1s linear;
+    z-index: 1;
+}
+
+.mouth-bound {
+    position: absolute;
+    width: 2px;
+    height: 14px;
+    background: rgba(255, 255, 255, 0.8);
+    top: -3px;
+    z-index: 2;
+}
