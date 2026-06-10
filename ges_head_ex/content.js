@@ -50,6 +50,13 @@ function injectUI() {
                         <div id="yaw-indicator"></div>
                     </div>
                 </div>
+                <div class="head-status-row">
+                    <div class="head-label">张嘴 (视频启停)</div>
+                    <div class="mouth-bar">
+                        <div id="mouth-bound-open" class="mouth-bound"></div>
+                        <div id="mouth-indicator"></div>
+                    </div>
+                </div>
             </div>
 
             <div id="hybrid-actions">
@@ -107,6 +114,8 @@ async function initHybridControl() {
     const EDGE_YAW_LEFT = 0.12, EDGE_YAW_RIGHT = -0.12;
     const RATIO_P_MIN = -0.20, RATIO_P_MAX = 0.24, RATIO_P_RANGE = 0.44;
     const RATIO_Y_MIN = -0.25, RATIO_Y_MAX = 0.25, RATIO_Y_RANGE = 0.50;
+    const EDGE_MOUTH_OPEN = 0.11; // 张嘴判定阈值比例（嘴唇间距/脸高，可根据舒适度微调）
+    const RATIO_M_MAX = 0.22;      // 仪表盘映射的最大嘴张开比例
 
     let lastPitchState = "CENTERED";
     let nodTimes = [];
@@ -116,11 +125,12 @@ async function initHybridControl() {
 
     // 预设UI边界线
     document.getElementById('pitch-bound-up').style.top = `${((EDGE_UP - RATIO_P_MIN) / RATIO_P_RANGE) * 100}%`;
+    document.getElementById('mouth-bound-open').style.left = `${(EDGE_MOUTH_OPEN / RATIO_M_MAX) * 100}%`;
     document.getElementById('pitch-bound-down').style.top = `${((EDGE_DOWN - RATIO_P_MIN) / RATIO_P_RANGE) * 100}%`;
     document.getElementById('yaw-bound-right').style.left = `${((EDGE_YAW_RIGHT - RATIO_Y_MIN) / RATIO_Y_RANGE) * 100}%`;
     document.getElementById('yaw-bound-left').style.left = `${((EDGE_YAW_LEFT - RATIO_Y_MIN) / RATIO_Y_RANGE) * 100}%`;
 
-    const FACE_MAP = { nose: 1, forehead: 10, chin: 152, leftEyeOuter: 33, rightEyeOuter: 263 };
+    const FACE_MAP = { nose: 1, forehead: 10, chin: 152, leftEyeOuter: 33, rightEyeOuter: 263, upperLipInner: 13, lowerLipInner: 14 };
 
     // ================= DOM 核心控制 (全部恢复) =================
     function triggerPageLike() {
@@ -161,7 +171,7 @@ async function initHybridControl() {
             activeBoxes = []; // 停止时全部变灰
         } else if (currentMode === "HEAD") {
             // 头控模式相关
-            activeBoxes = ['box-mode-toggle', 'box-scroll-up', 'box-scroll-down', 'box-rewind', 'box-forward', 'box-like'];
+            activeBoxes = ['box-mode-toggle', 'box-scroll-up', 'box-scroll-down', 'box-rewind', 'box-forward', 'box-like', 'box-play-pause'];
         } else if (isFreeMode) {
             // 自由模式相关
             activeBoxes = ['box-free-mode'];
@@ -210,6 +220,11 @@ async function initHybridControl() {
         const badge = document.getElementById('mode-badge');
         const fingerStatus = document.getElementById('finger-status');
         const headStatus = document.getElementById('head-status');
+
+        // 【新增核心代码】物理清空画布残余，防止前一个模式的骨骼图死锁停留
+        if (canvasCtx && canvasElement) {
+             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        }
 
         if (newMode === "HEAD") {
             badge.innerText = "🗣️ 头控模式 (V字切回)";
@@ -366,6 +381,22 @@ async function initHybridControl() {
         const yawRatio = (nose.x - eyeCenterX) / faceWidth;
         updateYawIndicator(yawRatio);
 
+        // === 核心新增：计算嘴巴张开度与更新 UI ===
+        const upperLip = landmarks[FACE_MAP.upperLipInner];
+        const lowerLip = landmarks[FACE_MAP.lowerLipInner];
+        const mouthDistance = getDistance(upperLip, lowerLip); // 直接复用你原有的 getDistance 基础函数
+        const mouthRatio = mouthDistance / faceHeight;
+
+        const mouthInd = document.getElementById('mouth-indicator');
+        if (mouthInd) {
+            let mouthPct = Math.max(0, Math.min(100, (mouthRatio / RATIO_M_MAX) * 100));
+            mouthInd.style.width = mouthPct + '%';
+            mouthInd.style.background = (mouthRatio > EDGE_MOUTH_OPEN) ? '#00f2ff' : '#10b981';
+        }
+
+        // 判定高优姿态：如果张大嘴，立即中断普通头控倾斜，返回嘴部动作信号
+        if (mouthRatio > EDGE_MOUTH_OPEN) return "MOUTH_OPEN";
+
         // 1. 判定俯仰状态（上下）
         let currentPitchState = "CENTERED";
         if (pitchRatio < EDGE_UP) currentPitchState = "HEAD_UP";
@@ -439,7 +470,7 @@ async function initHybridControl() {
         }
 
         // 下方的打断列表同步加上 "DOUBLE_SHAKE" 避免死锁
-        if (activeGesture && activeGesture !== gesture && ["PALM_UP", "PALM_DOWN", "HEAD_UP", "HEAD_DOWN", "V_SIGN", "FREE_MODE_TOGGLE", "THUMBS_UP", "DOUBLE_SHAKE"].includes(activeGesture)) {
+        if (activeGesture && activeGesture !== gesture && ["PALM_UP", "PALM_DOWN", "HEAD_UP", "HEAD_DOWN", "V_SIGN", "FREE_MODE_TOGGLE", "THUMBS_UP", "DOUBLE_SHAKE", "MOUTH_OPEN"].includes(activeGesture)) {
             resetUIState(); activeGesture = null;
         }
 
@@ -471,6 +502,11 @@ async function initHybridControl() {
             const boxId = GESTURE_BOX_MAP[gesture];
             if (gesture === "HEAD_YAW_LEFT" && now > cooldowns.VIDEO_SEEK) { adjustVideoTime(-5); triggerInstantUI(boxId, true); cooldowns.VIDEO_SEEK = now + 400; }
             if (gesture === "HEAD_YAW_RIGHT" && now > cooldowns.VIDEO_SEEK) { adjustVideoTime(5); triggerInstantUI(boxId, true); cooldowns.VIDEO_SEEK = now + 400; }
+            if (gesture === "MOUTH_OPEN") {
+                return handleContinuous(gesture, "box-play-pause", false, () => {
+                    togglePlayPause();
+                    triggerInstantUI("box-play-pause", true);
+                }, 2000);
         }
     }
 
@@ -515,6 +551,10 @@ async function initHybridControl() {
                 faceMesh.onResults((res) => {
                     if (!isActive || currentMode !== "HEAD") return;
                     canvasCtx.save();
+
+                    // 【新增核心代码】擦除上一帧人脸网格，防止多帧画面无限叠加全白
+                    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
                     let headGesture = "CENTERED";
                     if (res.multiFaceLandmarks?.length > 0) {
                         const lm = res.multiFaceLandmarks[0];
@@ -523,6 +563,9 @@ async function initHybridControl() {
                     } else {
                         // 丢失人脸时，不仅重置指示器，也要重置姿态状态变量
                         updatePitchIndicator(0); updateYawIndicator(0);
+                        // 【新增代码】丢失人脸时顺便清空嘴巴条
+                        const mouthInd = document.getElementById('mouth-indicator');
+                        if (mouthInd) mouthInd.style.width = '0%';
                         lastPitchState = "CENTERED"; lastYawState = "CENTERED";
                     }
                     canvasCtx.restore();

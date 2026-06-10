@@ -50,6 +50,13 @@ function injectUI() {
                         <div id="yaw-indicator"></div>
                     </div>
                 </div>
+                <div class="head-status-row">
+                    <div class="head-label">张嘴 (视频启停)</div>
+                    <div class="mouth-bar">
+                        <div id="mouth-bound-open" class="mouth-bound"></div>
+                        <div id="mouth-indicator"></div>
+                    </div>
+                </div>
             </div>
 
             <div id="hybrid-actions">
@@ -60,6 +67,9 @@ function injectUI() {
                 <div class="hybrid-action-box" id="box-rewind"><span class="hybrid-icon">👈</span><span>后退</span></div>
                 <div class="hybrid-action-box" id="box-forward"><span class="hybrid-icon">👉</span><span>前进</span></div>
                 <div class="hybrid-action-box" id="box-play-pause"><span class="hybrid-icon">⏯️</span><span>启停</span></div>
+                <div class="hybrid-action-box" id="box-like"><span class="hybrid-icon">💍</span><span>点赞</span></div>
+                <div class="hybrid-action-box" id="box-speed"><span class="hybrid-icon">🤘</span><span>倍速</span></div>
+                <div class="hybrid-action-box" id="box-refresh"><span class="hybrid-icon">🔄</span><span>刷新</span></div>
                 <div class="hybrid-action-box" id="box-stop"><span class="hybrid-icon">🤙</span><span>关闭</span></div>
             </div>
         </div>
@@ -85,13 +95,12 @@ async function initHybridControl() {
     let faceMesh = null;
 
     // 系统状态
-    let currentMode = "HAND"; // 可选: "HAND", "HEAD"
+    let currentMode = "HAND"; // "HAND" 或 "HEAD"
     const SCROLL_SPEED = 45;
-    const CONTINUOUS_CONFIRM_TIME = 900;
     let activeGesture = null;
     let gestureStartTime = 0;
     let uiClearTimeouts = {};
-    const cooldowns = { VIDEO_SEEK: 0, VIDEO_TOGGLE: 0 };
+    const cooldowns = { LIKE: 0, REFRESH: 0, VIDEO_SEEK: 0, VIDEO_TOGGLE: 0, SPEED: 0 };
 
     // 自由模式参数 (仅限Hand)
     let isFreeMode = false;
@@ -100,22 +109,44 @@ async function initHybridControl() {
     let lastDwellX = 0, lastDwellY = 0;
     let dwellStartTime = 0;
 
-    // ----- 头控参数配置 -----
-    const EDGE_UP = -0.08, EDGE_DOWN = 0.12;       // 俯仰滚动阈值
-    const EDGE_YAW_LEFT = 0.12, EDGE_YAW_RIGHT = -0.12; // 偏航进度阈值
-
+    // 头控与点头参数
+    const EDGE_UP = -0.08, EDGE_DOWN = 0.12;
+    const EDGE_YAW_LEFT = 0.12, EDGE_YAW_RIGHT = -0.12;
     const RATIO_P_MIN = -0.20, RATIO_P_MAX = 0.24, RATIO_P_RANGE = 0.44;
     const RATIO_Y_MIN = -0.25, RATIO_Y_MAX = 0.25, RATIO_Y_RANGE = 0.50;
+
+    // 新增：嘴巴识别阈值与最大映射
+    const EDGE_MOUTH_OPEN = 0.11;
+    const RATIO_M_MAX = 0.22;
+
+    let lastPitchState = "CENTERED";
+    let nodTimes = [];
+
+    let lastYawState = "CENTERED";
+    let shakeTimes = [];
 
     // 预设UI边界线
     document.getElementById('pitch-bound-up').style.top = `${((EDGE_UP - RATIO_P_MIN) / RATIO_P_RANGE) * 100}%`;
     document.getElementById('pitch-bound-down').style.top = `${((EDGE_DOWN - RATIO_P_MIN) / RATIO_P_RANGE) * 100}%`;
     document.getElementById('yaw-bound-right').style.left = `${((EDGE_YAW_RIGHT - RATIO_Y_MIN) / RATIO_Y_RANGE) * 100}%`;
     document.getElementById('yaw-bound-left').style.left = `${((EDGE_YAW_LEFT - RATIO_Y_MIN) / RATIO_Y_RANGE) * 100}%`;
+    // 新增：动态对齐嘴巴刻度边界线
+    document.getElementById('mouth-bound-open').style.left = `${(EDGE_MOUTH_OPEN / RATIO_M_MAX) * 100}%`;
 
-    const FACE_MAP = { nose: 1, forehead: 10, chin: 152, leftEyeOuter: 33, rightEyeOuter: 263 };
+    // 核心拓展：引入 13、14 号内唇核心特征点
+    const FACE_MAP = {
+        nose: 1, forehead: 10, chin: 152,
+        leftEyeOuter: 33, rightEyeOuter: 263,
+        upperLipInner: 13, lowerLipInner: 14
+    };
 
-    // ================= DOM 控制 =================
+    // ================= DOM 核心控制 =================
+    function triggerPageLike() {
+        const selectors = ['[aria-label*="赞"]', '[aria-label*="like"]', '[aria-label*="Like"]', '[data-testid*="like"]', '.like-btn', '.Like', '[title*="赞"]', 'svg[class*="like"]', '[class*="like"]', '[class*="zan"]', '.video-like'];
+        for (const sel of selectors) { const el = document.querySelector(sel); if (el && typeof el.click === 'function') { el.click(); return true; } }
+        for (const el of document.querySelectorAll('button, [role="button"], span, div')) { if (/^赞$|^点赞$|^like$/i.test(el.textContent?.trim()) && el.offsetParent !== null) { el.click(); return true; } }
+        return false;
+    }
     function getActiveVideo() {
         const videos = Array.from(document.querySelectorAll('video'));
         if (!videos.length) return null;
@@ -125,22 +156,65 @@ async function initHybridControl() {
     }
     function adjustVideoTime(s) { const v = getActiveVideo(); if (v) { v.currentTime = Math.max(0, Math.min(v.duration, v.currentTime + s)); return true; } return false; }
     function togglePlayPause() { const v = getActiveVideo(); if (v) { v.paused ? v.play() : v.pause(); return true; } return false; }
+    function toggleSpeed() { const v = getActiveVideo(); if (v) { v.playbackRate = v.playbackRate === 1.0 ? 2.0 : 1.0; return true; } return false; }
 
-    // ================= UI 更新 =================
+    function simulateClick(x, y) {
+        cursorEl.style.display = 'none';
+        const el = document.elementFromPoint(x, y);
+        cursorEl.style.display = 'block';
+        if (el) {
+            el.focus?.();
+            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+            el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+        }
+    }
+
+    // ================= 严格的状态灰态隔离 UI =================
+    function updateActionBoxStates() {
+        const allBoxes = ['box-mode-toggle', 'box-free-mode', 'box-scroll-up', 'box-scroll-down', 'box-rewind', 'box-forward', 'box-play-pause', 'box-like', 'box-speed', 'box-refresh', 'box-stop'];
+        let activeBoxes = [];
+
+        if (!isActive) {
+            activeBoxes = [];
+        } else if (currentMode === "HEAD") {
+            // 核心修改：在头控模式下，解除 'box-play-pause' (启停) 的全灰隔离
+            activeBoxes = ['box-mode-toggle', 'box-scroll-up', 'box-scroll-down', 'box-rewind', 'box-forward', 'box-like', 'box-play-pause'];
+        } else if (isFreeMode) {
+            activeBoxes = ['box-free-mode'];
+        } else {
+            activeBoxes = allBoxes;
+        }
+
+        allBoxes.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                if (activeBoxes.includes(id)) {
+                    el.classList.remove('disabled');
+                } else {
+                    el.classList.add('disabled');
+                    el.classList.remove('scaling', 'glowing', 'error-glow');
+                }
+            }
+        });
+    }
+
     const GESTURE_BOX_MAP = {
         "V_SIGN": "box-mode-toggle",
         "PALM_UP": "box-scroll-up", "PALM_DOWN": "box-scroll-down",
         "POINT_LEFT": "box-rewind", "POINT_RIGHT": "box-forward",
         "MIDDLE": "box-play-pause", "FREE_MODE_TOGGLE": "box-free-mode", "PINKY_ONLY": "box-stop",
         "HEAD_UP": "box-scroll-up", "HEAD_DOWN": "box-scroll-down",
-        "HEAD_YAW_LEFT": "box-rewind", "HEAD_YAW_RIGHT": "box-forward"
+        "HEAD_YAW_LEFT": "box-rewind", "HEAD_YAW_RIGHT": "box-forward",
+        "RINGS_UP": "box-like", "HORNS": "box-speed", "THREE_UP": "box-refresh",
+        "MOUTH_OPEN": "box-play-pause" // 映射关系
     };
 
     function resetUIState() { document.querySelectorAll('.hybrid-action-box').forEach(el => el.classList.remove('scaling', 'glowing', 'error-glow')); }
 
     function triggerInstantUI(boxId, isSuccess) {
         const box = document.getElementById(boxId);
-        if (!box) return;
+        if (!box || box.classList.contains('disabled')) return;
         box.classList.remove('scaling', 'glowing', 'error-glow');
         void box.offsetWidth;
         box.classList.add(isSuccess ? 'glowing' : 'error-glow');
@@ -153,10 +227,14 @@ async function initHybridControl() {
         const badge = document.getElementById('mode-badge');
         const fingerStatus = document.getElementById('finger-status');
         const headStatus = document.getElementById('head-status');
-        
-        
+
+        // 修复：切换模式时，物理擦除画布，干掉上一个模式留下的倒数第一帧残影
+        if (canvasCtx && canvasElement) {
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        }
+
         if (newMode === "HEAD") {
-            badge.innerText = "🗣️ 头控模式 (V字切回)";
+            badge.innerText = "🗣️ 头控模式 (双摇切回)";
             badge.className = "head-mode";
             fingerStatus.style.display = "none";
             headStatus.style.display = "flex";
@@ -167,12 +245,15 @@ async function initHybridControl() {
             fingerStatus.style.display = "flex";
             headStatus.style.display = "none";
             updatePitchIndicator(0); updateYawIndicator(0);
+            const mouthInd = document.getElementById('mouth-indicator');
+            if (mouthInd) mouthInd.style.width = '0%';
         }
         resetUIState();
         activeGesture = null;
+        updateActionBoxStates();
     }
 
-    function handleContinuous(gesture, boxId, isRepeatable, onConfirm) {
+    function handleContinuous(gesture, boxId, isRepeatable, onConfirm, customDelay = 900) {
         const now = Date.now();
         const box = boxId ? document.getElementById(boxId) : null;
 
@@ -180,9 +261,11 @@ async function initHybridControl() {
             resetUIState();
             activeGesture = gesture;
             gestureStartTime = now;
-            if (box) box.classList.add('scaling');
-        } else if (now - gestureStartTime > CONTINUOUS_CONFIRM_TIME) {
-            if (box && !isRepeatable) { box.classList.remove('scaling'); box.classList.add('glowing'); }
+            if (box && !box.classList.contains('disabled')) box.classList.add('scaling');
+        } else if (now - gestureStartTime > customDelay) {
+            if (box && !box.classList.contains('disabled') && !isRepeatable) {
+                box.classList.remove('scaling'); box.classList.add('glowing');
+            }
             onConfirm();
             if (!isRepeatable) {
                 activeGesture = "COOLDOWN";
@@ -210,15 +293,24 @@ async function initHybridControl() {
     }
 
     function recognizeGesture(landmarks) {
-        const indexEx = isFingerExtended(landmarks, 8, 5), middleEx = isFingerExtended(landmarks, 12, 9), ringEx = isFingerExtended(landmarks, 16, 13), pinkyEx = isFingerExtended(landmarks, 20, 17);
-        // V_SIGN 作为全局切换键
-        if (indexEx && middleEx && !ringEx && !pinkyEx) return "V_SIGN";
-
-        // 如果是在头控模式，除了 V_SIGN 其它全部忽略
         if (currentMode === "HEAD") return "NONE";
 
+        const thumbEx = isFingerExtended(landmarks, 4, 2);
+        const indexEx = isFingerExtended(landmarks, 8, 5);
+        const middleEx = isFingerExtended(landmarks, 12, 9);
+        const ringEx = isFingerExtended(landmarks, 16, 13);
+        const pinkyEx = isFingerExtended(landmarks, 20, 17);
+
+        if (indexEx && middleEx && !ringEx && !pinkyEx) return "V_SIGN";
         if (!indexEx && !middleEx && !ringEx && pinkyEx) return "PINKY_ONLY";
         if (!indexEx && middleEx && ringEx && !pinkyEx) return "FREE_MODE_TOGGLE";
+
+        if (!indexEx && !middleEx && ringEx && !pinkyEx) {
+            if (landmarks[4].y < landmarks[3].y && landmarks[4].y < landmarks[2].y) return "RINGS_UP";
+        }
+        if (indexEx && !middleEx && !ringEx && pinkyEx) return "HORNS";
+        if (thumbEx && !indexEx && !middleEx && !ringEx && !pinkyEx) return "THUMBS_UP";
+
         if (indexEx && middleEx && ringEx && pinkyEx) {
             const dy = landmarks[9].y - landmarks[0].y;
             if (dy < -0.15) return "PALM_UP";
@@ -233,7 +325,39 @@ async function initHybridControl() {
         return "NONE";
     }
 
-    // ================= 头部识别引擎 =================
+    function handleFreeModeCursor(landmarks) {
+        let rawX = (1 - landmarks[8].x) * window.innerWidth;
+        let rawY = landmarks[8].y * window.innerHeight;
+        smoothedCursorX += (rawX - smoothedCursorX) * 0.15;
+        smoothedCursorY += (rawY - smoothedCursorY) * 0.15;
+        cursorEl.style.left = smoothedCursorX + 'px';
+        cursorEl.style.top = smoothedCursorY + 'px';
+
+        const dist = Math.hypot(smoothedCursorX - lastDwellX, smoothedCursorY - lastDwellY);
+        const now = Date.now();
+
+        if (dist < 45) {
+            let dwellTime = now - dwellStartTime;
+            let progress = Math.min(1, dwellTime / 1200);
+            cursorEl.style.transform = `translate(-50%, -50%) scale(${1 - progress * 0.5})`;
+            cursorEl.style.backgroundColor = `rgba(239, 68, 68, ${0.8 + progress * 0.2})`;
+
+            if (dwellTime > 1200) {
+                cursorEl.style.transform = `translate(-50%, -50%) scale(2)`;
+                cursorEl.style.backgroundColor = `rgba(0, 242, 255, 0.9)`;
+                simulateClick(smoothedCursorX, smoothedCursorY);
+                lastDwellX = smoothedCursorX; lastDwellY = smoothedCursorY;
+                dwellStartTime = now + 1000;
+            }
+        } else {
+            lastDwellX = smoothedCursorX; lastDwellY = smoothedCursorY;
+            dwellStartTime = now;
+            cursorEl.style.transform = `translate(-50%, -50%) scale(1)`;
+            cursorEl.style.backgroundColor = `rgba(239, 68, 68, 0.8)`;
+        }
+    }
+
+    // ================= 头部识别引擎与点/摇头判定 =================
     function updatePitchIndicator(ratio) {
         const ind = document.getElementById('pitch-indicator');
         if (!ind) return;
@@ -253,65 +377,135 @@ async function initHybridControl() {
     function analyzeHeadPosture(landmarks) {
         const nose = landmarks[FACE_MAP.nose], forehead = landmarks[FACE_MAP.forehead], chin = landmarks[FACE_MAP.chin], leftEye = landmarks[FACE_MAP.leftEyeOuter], rightEye = landmarks[FACE_MAP.rightEyeOuter];
 
-        // 俯仰计算
         const faceHeight = Math.max(Math.abs(chin.y - forehead.y), 1e-5);
         const eyeCenterY = (leftEye.y + rightEye.y) / 2;
         const pitchRatio = (nose.y - eyeCenterY - faceHeight * 0.16) / faceHeight;
         updatePitchIndicator(pitchRatio);
 
-        // 偏航计算 (水平扭头)
         const faceWidth = Math.max(Math.abs(rightEye.x - leftEye.x), 1e-5);
         const eyeCenterX = (leftEye.x + rightEye.x) / 2;
         const yawRatio = (nose.x - eyeCenterX) / faceWidth;
         updateYawIndicator(yawRatio);
 
-        // 判定 (Yaw 优先级高于 Pitch)
-        // 镜像逻辑：物理向左转 = 图像向右 = nose.x 变大 = yawRatio 正值
-        if (yawRatio > EDGE_YAW_LEFT) return "HEAD_YAW_LEFT";
-        if (yawRatio < EDGE_YAW_RIGHT) return "HEAD_YAW_RIGHT";
+        // === 核心新增：实时测算内部上下嘴唇内沿物理间距比例，动态刷新 UI ===
+        const upperLip = landmarks[FACE_MAP.upperLipInner];
+        const lowerLip = landmarks[FACE_MAP.lowerLipInner];
+        const mouthDistance = getDistance(upperLip, lowerLip);
+        const mouthRatio = mouthDistance / faceHeight;
 
-        if (pitchRatio < EDGE_UP) return "HEAD_UP";
-        if (pitchRatio > EDGE_DOWN) return "HEAD_DOWN";
+        const mouthInd = document.getElementById('mouth-indicator');
+        if (mouthInd) {
+            let mouthPct = Math.max(0, Math.min(100, (mouthRatio / RATIO_M_MAX) * 100));
+            mouthInd.style.width = mouthPct + '%';
+            // 超出设定的临界阈值就高亮变成青蓝色
+            mouthInd.style.background = (mouthRatio > EDGE_MOUTH_OPEN) ? '#00f2ff' : '#10b981';
+        }
 
-        return "CENTERED";
+        // 高优先拦截：如果是大张嘴状态，打断一切其余的普通滚动或进度挪动，直接返回触发启停信号
+        if (mouthRatio > EDGE_MOUTH_OPEN) return "MOUTH_OPEN";
+
+        // 1. 判定俯仰状态（上下）
+        let currentPitchState = "CENTERED";
+        if (pitchRatio < EDGE_UP) currentPitchState = "HEAD_UP";
+        else if (pitchRatio > EDGE_DOWN) currentPitchState = "HEAD_DOWN";
+
+        if (lastPitchState !== "HEAD_DOWN" && currentPitchState === "HEAD_DOWN") {
+            const now = Date.now();
+            nodTimes.push(now);
+            nodTimes = nodTimes.filter(t => now - t < 1000);
+            if (nodTimes.length >= 2) {
+                nodTimes = [];
+                lastPitchState = currentPitchState;
+                return "DOUBLE_NOD";
+            }
+        }
+        lastPitchState = currentPitchState;
+
+        // 2. 判定偏航状态（左右）
+        let currentYawState = "CENTERED";
+        if (yawRatio > EDGE_YAW_LEFT) currentYawState = "HEAD_YAW_LEFT";
+        else if (yawRatio < EDGE_YAW_RIGHT) currentYawState = "HEAD_YAW_RIGHT";
+
+        if (lastYawState !== currentYawState && currentYawState !== "CENTERED") {
+            const now = Date.now();
+            shakeTimes.push(now);
+            shakeTimes = shakeTimes.filter(t => now - t < 1200);
+            if (shakeTimes.length >= 3) {
+                shakeTimes = [];
+                lastYawState = currentYawState;
+                return "DOUBLE_SHAKE";
+            }
+        }
+        lastYawState = currentYawState;
+
+        if (currentYawState !== "CENTERED") return currentYawState;
+        return currentPitchState;
     }
 
     // ================= 动作执行路由器 =================
     function executeAction(gesture) {
         const now = Date.now();
 
-        // 1. 全局模式切换
+        if (gesture === "DOUBLE_SHAKE" && currentMode === "HEAD") {
+            switchMode("HAND");
+            triggerInstantUI("box-mode-toggle", true);
+            return;
+        }
+
+        if (gesture === "DOUBLE_NOD") {
+            if (now > cooldowns.LIKE) {
+                const success = triggerPageLike();
+                triggerInstantUI("box-like", success);
+                cooldowns.LIKE = now + 2000;
+            }
+            return;
+        }
+
         if (gesture === "V_SIGN") {
             handleContinuous(gesture, GESTURE_BOX_MAP[gesture], false, () => {
-                switchMode(currentMode === "HAND" ? "HEAD" : "HAND");
+                if (currentMode === "HAND") {
+                    switchMode("HEAD");
+                }
             });
             return;
         }
 
-        // 打断未完成的持续动作
-        if (activeGesture && activeGesture !== gesture && ["PALM_UP", "PALM_DOWN", "HEAD_UP", "HEAD_DOWN", "V_SIGN", "FREE_MODE_TOGGLE"].includes(activeGesture)) {
+        // 把 "MOUTH_OPEN" 塞入打断判定池，动作中途一旦闭嘴能立刻触发变红缩回防错机制
+        if (activeGesture && activeGesture !== gesture && ["PALM_UP", "PALM_DOWN", "HEAD_UP", "HEAD_DOWN", "V_SIGN", "FREE_MODE_TOGGLE", "THUMBS_UP", "DOUBLE_SHAKE", "MOUTH_OPEN"].includes(activeGesture)) {
             resetUIState(); activeGesture = null;
         }
 
         if (currentMode === "HAND") {
             if (isFreeMode) {
-                if (gesture === "FREE_MODE_TOGGLE") { handleContinuous(gesture, "box-free-mode", false, () => { isFreeMode = false; cursorEl.style.display = 'none'; triggerInstantUI("box-free-mode", true); }); }
+                if (gesture === "FREE_MODE_TOGGLE") { handleContinuous(gesture, "box-free-mode", false, () => { isFreeMode = false; cursorEl.style.display = 'none'; updateActionBoxStates(); triggerInstantUI("box-free-mode", true); }); }
                 else if (activeGesture === "FREE_MODE_TOGGLE") { activeGesture = null; resetUIState(); }
                 return;
             }
             if (gesture === "PALM_UP") return handleContinuous(gesture, "box-scroll-up", true, () => window.scrollBy({ top: -SCROLL_SPEED, left: 0, behavior: 'instant' }));
             if (gesture === "PALM_DOWN") return handleContinuous(gesture, "box-scroll-down", true, () => window.scrollBy({ top: SCROLL_SPEED, left: 0, behavior: 'instant' }));
             if (gesture === "PINKY_ONLY") return handleContinuous(gesture, "box-stop", false, stopSystem);
-            if (gesture === "FREE_MODE_TOGGLE") return handleContinuous(gesture, "box-free-mode", false, () => { isFreeMode = true; cursorEl.style.display = 'block'; triggerInstantUI("box-free-mode", true); dwellStartTime = now; });
+            if (gesture === "FREE_MODE_TOGGLE") return handleContinuous(gesture, "box-free-mode", false, () => { isFreeMode = true; cursorEl.style.display = 'block'; updateActionBoxStates(); triggerInstantUI("box-free-mode", true); dwellStartTime = now; });
+            if (gesture === "THREE_UP") return handleContinuous(gesture, "box-refresh", false, () => { location.reload(); });
 
             const boxId = GESTURE_BOX_MAP[gesture];
             if (gesture === "POINT_RIGHT" && now > cooldowns.VIDEO_SEEK) { adjustVideoTime(5); triggerInstantUI(boxId, true); cooldowns.VIDEO_SEEK = now + 400; }
             if (gesture === "POINT_LEFT" && now > cooldowns.VIDEO_SEEK) { adjustVideoTime(-5); triggerInstantUI(boxId, true); cooldowns.VIDEO_SEEK = now + 400; }
             if (gesture === "MIDDLE" && now > cooldowns.VIDEO_TOGGLE) { togglePlayPause(); triggerInstantUI(boxId, true); cooldowns.VIDEO_TOGGLE = now + 1000; }
+            if (gesture === "RINGS_UP" && now > cooldowns.LIKE) { triggerPageLike(); triggerInstantUI(boxId, true); cooldowns.LIKE = now + 2000; }
+            if (gesture === "HORNS" && now > cooldowns.SPEED) { toggleSpeed(); triggerInstantUI(boxId, true); cooldowns.SPEED = now + 1500; }
+            if (gesture === "THREE_UP" && now > cooldowns.REFRESH) { triggerInstantUI(boxId, true); cooldowns.REFRESH = now + 5000; setTimeout(() => location.reload(), 600); }
 
         } else if (currentMode === "HEAD") {
-            if (gesture === "HEAD_UP") return handleContinuous(gesture, "box-scroll-up", true, () => window.scrollBy({ top: -SCROLL_SPEED, left: 0, behavior: 'auto' }));
-            if (gesture === "HEAD_DOWN") return handleContinuous(gesture, "box-scroll-down", true, () => window.scrollBy({ top: SCROLL_SPEED, left: 0, behavior: 'auto' }));
+            // 核心功能：头控模式持续大张嘴2秒（2000ms）超时自动触发视频播放/暂停，按钮同步执行超时缩放机制
+            if (gesture === "MOUTH_OPEN") {
+                return handleContinuous(gesture, "box-play-pause", false, () => {
+                    togglePlayPause();
+                    triggerInstantUI("box-play-pause", true);
+                }, 2000);
+            }
+
+            if (gesture === "HEAD_UP") return handleContinuous(gesture, "box-scroll-up", true, () => window.scrollBy({ top: -SCROLL_SPEED, left: 0, behavior: 'instant' }), 150);
+            if (gesture === "HEAD_DOWN") return handleContinuous(gesture, "box-scroll-down", true, () => window.scrollBy({ top: SCROLL_SPEED, left: 0, behavior: 'instant' }), 150);
 
             const boxId = GESTURE_BOX_MAP[gesture];
             if (gesture === "HEAD_YAW_LEFT" && now > cooldowns.VIDEO_SEEK) { adjustVideoTime(-5); triggerInstantUI(boxId, true); cooldowns.VIDEO_SEEK = now + 400; }
@@ -319,11 +513,10 @@ async function initHybridControl() {
         }
     }
 
-    // ================= 媒体流与模型处理 =================
+    // ================= 系统启动/流处理 =================
     async function startSystem() {
         try {
             toggleBtn.innerText = "模块注入中...";
-            // 加载所需所有MediaPipe组件
             if (!window.Hands || !window.FaceMesh) {
                 await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js");
                 await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js");
@@ -344,12 +537,14 @@ async function initHybridControl() {
                         window.drawConnectors(canvasCtx, lm, window.HAND_CONNECTIONS, { color: 'rgba(255,255,255,0.2)', lineWidth: 2 });
                         window.drawLandmarks(canvasCtx, lm, { color: '#00f2ff', lineWidth: 1, radius: 2.5 });
                         handGesture = recognizeGesture(lm);
-                        if (currentMode === "HAND") updateFingerStatus(lm);
+                        if (currentMode === "HAND") {
+                            updateFingerStatus(lm);
+                            if (isFreeMode) handleFreeModeCursor(lm);
+                        }
                     } else {
                         if (currentMode === "HAND") updateFingerStatus(null);
                     }
                     canvasCtx.restore();
-                    // 如果手部识别出了动作，优先执行（例如V_SIGN切模式）
                     if (handGesture !== "NONE") executeAction(handGesture);
                 });
             }
@@ -359,6 +554,10 @@ async function initHybridControl() {
                 faceMesh.onResults((res) => {
                     if (!isActive || currentMode !== "HEAD") return;
                     canvasCtx.save();
+
+                    // 修复：进入头控模式后每一帧画面未擦除导致全白的问题。这里必须主动 clear 掉上一帧网格
+                    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
                     let headGesture = "CENTERED";
                     if (res.multiFaceLandmarks?.length > 0) {
                         const lm = res.multiFaceLandmarks[0];
@@ -366,23 +565,24 @@ async function initHybridControl() {
                         headGesture = analyzeHeadPosture(lm);
                     } else {
                         updatePitchIndicator(0); updateYawIndicator(0);
+                        const mouthInd = document.getElementById('mouth-indicator');
+                        if (mouthInd) mouthInd.style.width = '0%';
+                        lastPitchState = "CENTERED"; lastYawState = "CENTERED";
                     }
                     canvasCtx.restore();
-                    // 只有在手部没有动作霸占（比如没在做V字手势时），执行头控动作
-                    if (activeGesture !== "V_SIGN") executeAction(headGesture);
+                    if (headGesture !== "CENTERED") executeAction(headGesture);
                 });
             }
-
             camera = new window.Camera(videoElement, {
                 onFrame: async () => {
                     if (isActive) {
-                        await hands.send({ image: videoElement });
-                        if (currentMode === "HEAD") {
+                        if (currentMode === "HAND") {
+                            await hands.send({ image: videoElement });
+                        } else if (currentMode === "HEAD") {
                             await faceMesh.send({ image: videoElement });
                         }
                     }
-                },
-                width: 320, height: 240
+                }, width: 320, height: 240
             });
 
             toggleBtn.innerText = "请求硬件权限...";
@@ -391,7 +591,7 @@ async function initHybridControl() {
             document.getElementById('hybrid-debug-window').style.display = 'block';
             toggleBtn.innerText = "关闭混合控制";
             toggleBtn.classList.add('active');
-            switchMode("HAND"); // 默认手控
+            switchMode("HAND");
         } catch (error) {
             console.error(error);
             toggleBtn.innerText = "加载失败 (F12看控制台)";
@@ -407,6 +607,7 @@ async function initHybridControl() {
         if (camera) camera.stop();
         resetUIState();
         isFreeMode = false; cursorEl.style.display = 'none'; activeGesture = null;
+        updateActionBoxStates();
     }
 
     toggleBtn.addEventListener('click', () => { isActive ? stopSystem() : startSystem(); });
