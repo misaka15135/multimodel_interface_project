@@ -50,6 +50,8 @@ window.VoiceExt = window.VoiceExt || {};
   let lastTranscriptTs = 0;
   let pendingConfirm = null;       // { intent, undo, label } —— 等待"是/确认"
   let confirmTimer = null;
+  let lastSpeechErrorKey = '';
+  let lastSpeechErrorTs = 0;
 
   // 同时启动时的竞态保护标志
   let _acquiring = false;
@@ -134,6 +136,28 @@ window.VoiceExt = window.VoiceExt || {};
 
   function toast(msg, type) { ui.showToast(msg, type); }
   function errorToast(msg) { ui.showToast(`<span class="toast-error">${msg}</span>`, 'error'); }
+
+  function getSpeechErrorMessage(d) {
+    if (d && d.message) return d.message;
+    const error = d && d.error;
+    if (error === 'no-speech') return 'No speech detected. Check the microphone level and speak again.';
+    if (error === 'network') return 'Speech recognition network error. The browser speech service may be unreachable.';
+    if (error === 'audio-capture') return 'No microphone input captured. Check the selected input device.';
+    if (error === 'not-allowed' || error === 'service-not-allowed') return 'Microphone or speech service permission was denied.';
+    if (error === 'start-failed') return 'Failed to start speech recognition.';
+    if (error === 'no-match') return 'Speech was heard, but no text result was produced.';
+    return `Speech recognition error: ${error || 'unknown'}`;
+  }
+
+  function shouldThrottleSpeechError(d) {
+    const now = Date.now();
+    const key = `${d.error || 'unknown'}:${!!d.retrying}`;
+    const quietMs = d.retrying ? 5000 : 2000;
+    if (key === lastSpeechErrorKey && now - lastSpeechErrorTs < quietMs) return true;
+    lastSpeechErrorKey = key;
+    lastSpeechErrorTs = now;
+    return false;
+  }
 
   /** 切换到指定模式 */
   function setMode(newMode) {
@@ -518,7 +542,11 @@ window.VoiceExt = window.VoiceExt || {};
       setMode('active');
       toast('正在监听...');
     }
-    recognizer.start();
+    const started = recognizer.start();
+    if (!started) {
+      setMode('idle');
+      await releaseLock();
+    }
   }
 
   async function stopListening() {
@@ -575,9 +603,16 @@ window.VoiceExt = window.VoiceExt || {};
     // 语音
     sub('speech:result', handleSpeechResult);
     sub('speech:error', (d) => {
+      console.warn('[VoiceExt] speech:error', d);
       if (d.silent) return;
+      if (shouldThrottleSpeechError(d)) return;
+      if (d.retrying) {
+        toast(getSpeechErrorMessage(d), d.error === 'network' ? 'error' : undefined);
+        return;
+      }
       if (d.fatal) {
         setMode('idle');
+        releaseLock();
         errorToast(d.message || `识别错误: ${d.error}`);
         return;
       }

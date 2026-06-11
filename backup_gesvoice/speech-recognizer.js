@@ -1,11 +1,7 @@
 'use strict';
 
-// ============================================================
-//  SpeechRecognizer — 浏览器语音识别封装
-//  生命周期: init() → start() / stop() → dispose()
-//  通过 eventBus 发出 speech:result / speech:error / speech:end
-//  支持持续监听（continuous restart），唤醒词逻辑在 controller 层
-// ============================================================
+// SpeechRecognizer wraps the browser Web Speech API and reports enough
+// lifecycle detail to diagnose "green mic but no feedback" failures.
 window.VoiceExt = window.VoiceExt || {};
 
 (function (exports) {
@@ -20,10 +16,11 @@ window.VoiceExt = window.VoiceExt || {};
       this._restartOnEnd = false;
       this._restartTimer = null;
       this._disposed = false;
-      this._networkErrors = 0;      // 连续网络错误计数
-      this._maxNetworkRetries = 5;  // 最多连续重试次数
+      this._networkErrors = 0;
+      this._maxNetworkRetries = 5;
+      this._noSpeechCount = 0;
+      this._nextRestartDelay = 0;
 
-      // 供外部设置，语音暂停回调（如TTS播放时暂停识别）
       this.onShouldPause = null;
     }
 
@@ -32,7 +29,7 @@ window.VoiceExt = window.VoiceExt || {};
 
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        console.error('[SpeechRecognizer] 浏览器不支持 SpeechRecognition');
+        console.error('[SpeechRecognizer] browser does not support SpeechRecognition');
         return false;
       }
 
@@ -48,14 +45,33 @@ window.VoiceExt = window.VoiceExt || {};
     }
 
     start() {
-      if (this._disposed || !this._recognition) return;
-      this._networkErrors = 0;  // 重置网络错误计数
+      if (this._disposed || !this._recognition) {
+        this._emitError('start-failed', 'Speech recognition is not initialized.', { fatal: true });
+        return false;
+      }
+
+      this._networkErrors = 0;
+      this._noSpeechCount = 0;
       this._restartOnEnd = true;
       this._isListening = true;
+
       try {
         this._recognition.start();
-      } catch (_) { /* already started */ }
+      } catch (err) {
+        this._restartOnEnd = false;
+        this._isListening = false;
+        console.error('[SpeechRecognizer] start failed:', err);
+        this._emitError(
+          'start-failed',
+          err && err.message ? err.message : 'Failed to start speech recognition.',
+          { fatal: true }
+        );
+        return false;
+      }
+
       exports.eventBus.emit('speech:start');
+      console.info('[SpeechRecognizer] start requested');
+      return true;
     }
 
     stop() {
@@ -71,7 +87,6 @@ window.VoiceExt = window.VoiceExt || {};
       exports.eventBus.emit('speech:stop');
     }
 
-    /** 暂停（TTS 播报时用），与 stop 不同：不改变 restartOnEnd 状态 */
     pause() {
       this._isListening = false;
       if (this._recognition) {
@@ -79,13 +94,17 @@ window.VoiceExt = window.VoiceExt || {};
       }
     }
 
-    /** 从暂停恢复 */
     resume() {
+      if (!this._recognition || this._disposed) return false;
       this._isListening = true;
       try {
         this._recognition.start();
-      } catch (_) {}
+      } catch (err) {
+        console.warn('[SpeechRecognizer] resume failed:', err);
+        return false;
+      }
       exports.eventBus.emit('speech:start');
+      return true;
     }
 
     isListening() { return this._isListening; }
@@ -101,100 +120,136 @@ window.VoiceExt = window.VoiceExt || {};
       this._recognition = null;
     }
 
-    // ---- 内部 ----
-
     _bindEvents() {
       const rec = this._recognition;
       const bus = exports.eventBus;
 
+      rec.onstart = () => {
+        this._isListening = true;
+        console.info('[SpeechRecognizer] recognition started');
+      };
+
+      rec.onaudiostart = () => console.info('[SpeechRecognizer] audio capture started');
+      rec.onsoundstart = () => console.info('[SpeechRecognizer] sound detected');
+      rec.onspeechstart = () => console.info('[SpeechRecognizer] speech detected');
+      rec.onspeechend = () => console.info('[SpeechRecognizer] speech ended');
+      rec.onaudioend = () => console.info('[SpeechRecognizer] audio capture ended');
+
+      rec.onnomatch = () => {
+        console.warn('[SpeechRecognizer] no recognition match');
+        this._emitError('no-match', 'Speech was heard, but no text result was produced.');
+      };
+
       rec.onresult = (evt) => {
-        const result = evt.results[evt.results.length - 1][0];
-        const transcript = result.transcript.trim();
-        const confidence = result.confidence;
+        const speechResult = evt.results[evt.results.length - 1];
+        const result = speechResult && speechResult[0];
+        const transcript = result && result.transcript ? result.transcript.trim() : '';
+        const confidence = result ? result.confidence : 0;
 
         if (!transcript) return;
 
-        // 成功收到识别结果，重置网络错误计数
         this._networkErrors = 0;
+        this._noSpeechCount = 0;
+        console.info('[SpeechRecognizer] result:', transcript, 'confidence:', confidence);
 
         bus.emit('speech:result', {
           transcript,
           confidence,
-          isFinal: evt.results[evt.results.length - 1].isFinal,
+          isFinal: !!speechResult.isFinal,
         });
       };
 
       rec.onerror = (e) => {
-        // 静默处理：无语音 / 主动中断
-        if (e.error === 'no-speech' || e.error === 'aborted') {
-          bus.emit('speech:error', { error: e.error, silent: true });
+        const error = e && e.error ? e.error : 'unknown';
+        const message = e && e.message ? e.message : '';
+        console.warn('[SpeechRecognizer] error:', error, message);
+
+        if (error === 'aborted') {
+          bus.emit('speech:error', { error, message, silent: true });
           this._restartIfActive();
           return;
         }
 
-        // 网络错误：退避重试，不弹窗骚扰用户
-        if (e.error === 'network') {
+        if (error === 'no-speech') {
+          this._noSpeechCount++;
+          this._emitError(
+            'no-speech',
+            'No speech was detected. Check the microphone input level, then speak again.',
+            { retrying: true, count: this._noSpeechCount }
+          );
+          this._restartIfActive();
+          return;
+        }
+
+        if (error === 'network') {
           this._networkErrors++;
           if (this._networkErrors <= this._maxNetworkRetries) {
-            // 退避时间随错误次数增长：1s, 2s, 4s, 8s, 16s
             const delay = Math.min(1000 * Math.pow(2, this._networkErrors - 1), 30000);
-            console.warn('[SpeechRecognizer] 网络错误 #' + this._networkErrors +
-              '，将在 ' + (delay / 1000) + 's 后重试...');
+            this._emitError(
+              'network',
+              'Speech recognition network error. Retrying in ' + (delay / 1000) + 's...',
+              { retrying: true, count: this._networkErrors }
+            );
+            this._nextRestartDelay = delay;
             if (this._restartTimer) clearTimeout(this._restartTimer);
             this._restartTimer = setTimeout(() => {
               this._restartIfActive();
             }, delay);
           } else {
-            console.error('[SpeechRecognizer] 连续网络错误超过 ' +
-              this._maxNetworkRetries + ' 次，停止重试。请检查网络连接。');
             this._restartOnEnd = false;
             this._isListening = false;
-            bus.emit('speech:error', {
-              error: 'network',
-              message: '语音服务不可用（网络连接问题），请检查网络',
-              silent: false,
-              fatal: true,
-            });
+            this._emitError(
+              'network',
+              'Speech recognition service is unavailable. Check network access to the browser speech service.',
+              { fatal: true }
+            );
           }
           return;
         }
 
-        // 权限拒绝
-        if (e.error === 'not-allowed') {
-          bus.emit('speech:error', {
-            error: 'not-allowed',
-            message: '未授权麦克风，请在浏览器设置中允许',
-            silent: false,
-            fatal: true,
-          });
+        if (error === 'not-allowed' || error === 'service-not-allowed') {
           this._restartOnEnd = false;
           this._isListening = false;
+          this._emitError(
+            error,
+            'Microphone permission or speech service permission was denied. Allow microphone access in browser site settings.',
+            { fatal: true }
+          );
           return;
         }
 
-        // 其他严重错误
-        bus.emit('speech:error', { error: e.error, message: e.message, silent: false });
+        if (error === 'audio-capture') {
+          this._restartOnEnd = false;
+          this._isListening = false;
+          this._emitError(
+            error,
+            'No microphone input was captured. Check the selected input device.',
+            { fatal: true }
+          );
+          return;
+        }
+
+        this._emitError(error, message || 'Speech recognition error.');
         this._restartIfActive();
       };
 
       rec.onend = () => {
         this._isListening = false;
+        console.info('[SpeechRecognizer] recognition ended; restartOnEnd:', this._restartOnEnd);
         bus.emit('speech:end');
 
-        // 持续模式：自动重新开始
         if (this._restartOnEnd && !this._disposed) {
+          if (this._restartTimer) {
+            clearTimeout(this._restartTimer);
+            this._restartTimer = null;
+          }
+          const delay = this._nextRestartDelay || (this._continuous ? 150 : 300);
+          this._nextRestartDelay = 0;
           this._restartTimer = setTimeout(() => {
-            if (this._restartOnEnd && !this._disposed) {
-              // TTS 播放时不重启
-              if (this.onShouldPause && this.onShouldPause()) {
-                return;
-              }
-              try {
-                this._recognition.start();
-                this._isListening = true;
-              } catch (_) {}
-            }
-          }, this._continuous ? 150 : 300);
+            if (!this._restartOnEnd || this._disposed) return;
+            if (this.onShouldPause && this.onShouldPause()) return;
+            this._tryRestart('auto-restart');
+          }, delay);
         }
       };
     }
@@ -203,14 +258,28 @@ window.VoiceExt = window.VoiceExt || {};
       if (!this._restartOnEnd || this._disposed) return;
       if (this._restartTimer) clearTimeout(this._restartTimer);
       this._restartTimer = setTimeout(() => {
-        if (this._restartOnEnd && !this._disposed) {
-          if (this.onShouldPause && this.onShouldPause()) return;
-          try {
-            this._recognition.start();
-            this._isListening = true;
-          } catch (_) {}
-        }
+        if (!this._restartOnEnd || this._disposed) return;
+        if (this.onShouldPause && this.onShouldPause()) return;
+        this._tryRestart('restart');
       }, 300);
+    }
+
+    _tryRestart(reason) {
+      try {
+        this._recognition.start();
+        this._isListening = true;
+      } catch (err) {
+        console.warn('[SpeechRecognizer] ' + reason + ' failed:', err);
+      }
+    }
+
+    _emitError(error, message, extra = {}) {
+      exports.eventBus.emit('speech:error', {
+        error,
+        message,
+        silent: false,
+        ...extra,
+      });
     }
   }
 
