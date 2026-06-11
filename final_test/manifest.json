@@ -16,7 +16,7 @@
             ],
             "js": [
                 "MML_content.js"
-        ],
+            ],
             "run_at": "document_idle",
             "world": "MAIN"
         }

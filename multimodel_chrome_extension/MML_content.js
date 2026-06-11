@@ -630,201 +630,341 @@ async function initHybridControl() {
         updateActionBoxStates();
     }
 
+    // ============================================================================
+    // ======================== 语音控制引擎 (Voice Control) ========================
+    // ============================================================================
+
+    // 1. 刷新语音UI面板
+    function updateVoiceUI(status, message, transcript = "") {
+        const dot = document.getElementById('voice-dot');
+        const statusText = document.getElementById('voice-status-text');
+        const msgEl = document.getElementById('voice-message');
+        if (!dot || !statusText || !msgEl) return;
+
+        if (status === "SLEEP") {
+            dot.className = "voice-dot sleeping";
+            statusText.innerText = "语音待机中";
+            statusText.style.color = "#9ca3af";
+        } else if (status === "AWAKE") {
+            dot.className = "voice-dot awake";
+            statusText.innerText = "正在聆听";
+            statusText.style.color = "#10b981";
+        }
+
+        let finalHtml = message;
+        if (transcript) {
+            finalHtml = `<div class="voice-transcript">“${transcript}”</div>` + message;
+        }
+        msgEl.innerHTML = finalHtml;
+    }
+
+    // 2. 唤醒与休眠控制
+    function wakeUpAssistant() {
+        isVoiceAwake = true;
+        updateVoiceUI("AWAKE", "小助手已就绪，请下达指令。");
+        resetVoiceTimeout();
+    }
+
+    function sleepAssistant(reason) {
+        isVoiceAwake = false;
+        if (voiceTimeoutTimer) clearTimeout(voiceTimeoutTimer);
+        let msg = reason === "timeout"
+            ? "超过1分钟未使用已关闭，可通过再次呼叫“小助手”激活"
+            : "请呼叫“小助手”激活语音控制";
+        updateVoiceUI("SLEEP", msg);
+    }
+
+    function resetVoiceTimeout() {
+        if (voiceTimeoutTimer) clearTimeout(voiceTimeoutTimer);
+        // 60秒无活动则自动休眠
+        voiceTimeoutTimer = setTimeout(() => {
+            sleepAssistant("timeout");
+        }, 60000);
+    }
+
+    // 3. 处理语音指令（最高优先级硬件控制，绕过大模型直接生效）
+    async function handleVoiceCommand(text) {
+        updateVoiceUI("AWAKE", "处理中...", text);
+
+        // 【指令 A】：停止当前识别
+        if (text.includes("停止当前识别") || text.includes("停止识别") || text.includes("关闭识别")) {
+            let currentState = isActive ? (currentMode === "HEAD" ? "头部" : "手部") : "未开启任何";
+            if (isActive) {
+                stopSystem(); // 调用已有的关闭硬件追踪函数
+                updateVoiceUI("AWAKE", `已关闭${currentState}识别状态`, text);
+            } else {
+                updateVoiceUI("AWAKE", "当前并未开启任何识别", text);
+            }
+            return;
+        }
+
+        // 【指令 B】：开启头部识别
+        if (text.includes("开启头") || text.includes("切换到头")) {
+            if (!isActive) {
+                // 处于全关状态 -> 打开摄像头并切到头控
+                await startSystem();
+                switchMode("HEAD");
+                updateVoiceUI("AWAKE", "已开启头部识别状态", text);
+            } else if (currentMode === "HEAD") {
+                updateVoiceUI("AWAKE", "已处于对应状态 (头部控制)", text);
+            } else {
+                // 处于手控状态 -> 切换
+                switchMode("HEAD");
+                updateVoiceUI("AWAKE", "已转至头部识别状态", text);
+            }
+            return;
+        }
+
+        // 【指令 C】：开启手部识别
+        if (text.includes("开启手") || text.includes("切换到手")) {
+            if (!isActive) {
+                // 处于全关状态 -> 打开摄像头（默认就是手部）
+                await startSystem();
+                switchMode("HAND");
+                updateVoiceUI("AWAKE", "已开启手部识别状态", text);
+            } else if (currentMode === "HAND") {
+                updateVoiceUI("AWAKE", "已处于对应状态 (手部控制)", text);
+            } else {
+                // 处于头控状态 -> 切换
+                switchMode("HAND");
+                updateVoiceUI("AWAKE", "已转至手部识别状态", text);
+            }
+            return;
+        }
+
+        // 【指令 D】：如果未能匹配以上硬编码指令，调用大模型分析意图 (例如“向下滚动网页”等原版功能)
+        callLLMIntentEngine(text);
+    }
+
+    // 4. LLM 大模型 API 兜底调用
+    // ==========================================
+    // 新增：从 voice_content.js 移植的评论自动化引擎
+    // ==========================================
+    async function executeCommentDom(commentText) {
+        if (!commentText) return false;
+
+        // 1. 寻找评论输入框
+        const inputSelectors = ['#comment-input', '[id*="comment"]', '[class*="comment"] input', 'input[placeholder*="评论"]', 'textarea[placeholder*="评论"]', '[contenteditable="true"]'];
+        let inputEl = null;
+        for (const sel of inputSelectors) {
+            inputEl = document.querySelector(sel);
+            if (inputEl) break;
+        }
+        if (!inputEl) {
+            console.warn("未找到评论输入框");
+            return false;
+        }
+
+        // 2. 模拟聚焦并填入文本
+        inputEl.focus();
+        inputEl.click();
+        await new Promise(r => setTimeout(r, 150)); // 等待UI响应
+
+        if (inputEl.isContentEditable) {
+            inputEl.textContent = commentText;
+        } else {
+            inputEl.value = commentText;
+        }
+
+        // 触发框架的双向绑定更新 (Vue/React)
+        ['input', 'change'].forEach(n => inputEl.dispatchEvent(new Event(n, { bubbles: true, composed: true })));
+
+        await new Promise(r => setTimeout(r, 500)); // 稍微等待发送按钮亮起
+
+        // 3. 寻找发送/发布按钮
+        let submitBtn = null;
+        const container = inputEl.closest('form, [class*="comment"], [class*="reply"], [class*="send"]');
+        if (container) {
+            const btnSelectors = ['button[class*="submit"]', 'button[class*="send"]', 'button[class*="publish"]', 'button[class*="primary"]'];
+            for (const pat of btnSelectors) {
+                const el = container.querySelector(pat);
+                if (el && el.offsetParent !== null) { submitBtn = el; break; }
+            }
+        }
+        // 如果没找到，按文字暴力查找
+        if (!submitBtn) {
+            const btns = document.querySelectorAll('button, [role="button"], span, div');
+            for (const btn of btns) {
+                if (/^(发送|评论|提交|发布|发表|回复)$/.test(btn.textContent.trim()) && btn.offsetParent !== null) {
+                    submitBtn = btn; break;
+                }
+            }
+        }
+
+        // 4. 执行提交
+        if (submitBtn && !submitBtn.disabled) {
+            submitBtn.click();
+            return true;
+        } else {
+            // 兜底方案：模拟按下 Enter 键
+            inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true, composed: true }));
+            return true;
+        }
+    }
+
+
+    // ==========================================
+    // 4. LLM 大模型 API 兜底调用 (已扩充全套控制)
+    // ==========================================
+    async function callLLMIntentEngine(text) {
+        updateVoiceUI("AWAKE", "正在思考指令意图...", text);
+
+        // 【升级 Prompt】：明确告知大模型所有可用动作，以及抽取评论内容的要求
+        const systemPrompt = `你是一个网页控制助手。根据用户的语音指令，推断想要执行的操作并严格返回 JSON 格式。
+            支持的 action 有: 
+            - scroll_up: 向上滚动
+            - scroll_down: 向下滚动
+            - go_back: 返回上一页
+            - go_forward: 前进下一页
+            - refresh: 刷新当前网页
+            - play_pause: 视频暂停或继续播放 (如"暂停","播放","停一下")
+            - speed: 视频倍速切换 (如"倍速","快进一下")
+            - like: 点赞 (如"点赞","给个赞")
+            - comment: 发表评论。当意图是评论时，必须包含 "text" 字段提取评论正文 (如指令"评论说视频做得很棒"，返回 {"action": "comment", "text": "视频做得很棒"})
+            如果听不懂，返回 {"action": "unknown"}。`;
+
+        try {
+            const response = await fetch(LLM_API_CONFIG.url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${LLM_API_CONFIG.key}`
+                },
+                body: JSON.stringify({
+                    model: LLM_API_CONFIG.model,
+                    messages: [
+                        { "role": "system", "content": systemPrompt },
+                        { "role": "user", "content": text }
+                    ],
+                    response_format: { "type": "json_object" }
+                })
+            });
+
+            const data = await response.json();
+            const result = JSON.parse(data.choices[0].message.content);
+
+            if (result.action && result.action !== "unknown") {
+                updateVoiceUI("AWAKE", `大模型触发动作: ${result.action}`, text);
+
+                // 【核心映射】：将大模型的意图映射到你已有的本地函数
+                switch (result.action) {
+                    case "scroll_down":
+                        window.scrollBy({ top: window.innerHeight * 0.6, behavior: 'smooth' });
+                        break;
+                    case "scroll_up":
+                        window.scrollBy({ top: -window.innerHeight * 0.6, behavior: 'smooth' });
+                        break;
+                    case "go_back":
+                        history.back();
+                        break;
+                    case "go_forward":
+                        history.forward();
+                        break;
+                    case "refresh":
+                        location.reload();
+                        triggerInstantUI("box-refresh", true); // 触发右侧UI亮起
+                        break;
+                    case "play_pause":
+                        const isToggled = togglePlayPause(); // 调用你已有的视频控制函数
+                        if (isToggled) triggerInstantUI("box-play-pause", true);
+                        break;
+                    case "speed":
+                        const isSpedUp = toggleSpeed(); // 调用你已有的倍速函数
+                        if (isSpedUp) triggerInstantUI("box-speed", true);
+                        break;
+                    case "like":
+                        const isLiked = triggerPageLike(); // 调用你已有的点赞函数
+                        if (isLiked) triggerInstantUI("box-like", true);
+                        break;
+                    case "comment":
+                        if (result.text) {
+                            updateVoiceUI("AWAKE", `正在输入评论...`, result.text);
+                            const success = await executeCommentDom(result.text);
+                            if (success) {
+                                updateVoiceUI("AWAKE", `评论发送成功！`, text);
+                            } else {
+                                updateVoiceUI("AWAKE", `未能找到页面的评论输入框`, text);
+                            }
+                        } else {
+                            updateVoiceUI("AWAKE", `未识别到具体的评论内容`, text);
+                        }
+                        break;
+                }
+            } else {
+                updateVoiceUI("AWAKE", "未能理解该指令，请换个说法。", text);
+            }
+        } catch (e) {
+            console.error("LLM API 请求失败:", e);
+            updateVoiceUI("AWAKE", "API 请求失败，请检查网络或 Key。", text);
+        }
+    }
+
+    // 5. 初始化浏览器语音识别引擎 (静默监听)
+    function initVoiceControl() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            console.error("当前浏览器不支持 Web Speech API。请使用 Chrome。");
+            return;
+        }
+
+        voiceRecognition = new SpeechRecognition();
+        voiceRecognition.continuous = true;
+        voiceRecognition.interimResults = false;
+        voiceRecognition.lang = 'zh-CN';
+
+        voiceRecognition.onresult = (event) => {
+            const lastResult = event.results[event.results.length - 1];
+            if (lastResult.isFinal) {
+                // 【清洗逻辑】：去除所有常见标点符号
+                let text = lastResult[0].transcript.trim().replace(/[。，？！,.?! ]/g, '');
+                if (!text) return;
+                console.log("🎤 听到声音(清洗后):", text);
+
+                // 【修复点 2】：增加防御性警告，如果打断了说明 UI 没注入成功
+                if (!document.getElementById('voice-dot')) {
+                    console.warn("⚠️ 警告：检测到语音，但页面上未找到 #voice-dot 元素！请确认 injectUI() 是否正确执行。");
+                }
+
+                // 如果处于休眠状态，检查唤醒词
+                if (!isVoiceAwake) {
+                    if (text.includes("小助手") || text.includes("助手")) {
+                        console.log("🚀 成功匹配唤醒词，正在激活唤醒状态...");
+                        wakeUpAssistant();
+
+                        // 【功能突破】：支持连读（如 “小助手开启头部识别”）
+                        // 移除唤醒词及前面的所有内容，提取后面的核心硬控制指令
+                        const commandText = text.replace(/.*(小助手|助手)/, '').trim();
+                        if (commandText) {
+                            console.log("🔗 检测到连读指令，直接下发处理:", commandText);
+                            handleVoiceCommand(commandText);
+                        }
+                    }
+                } else {
+                    // 如果已被唤醒，重置倒计时并处理指令
+                    resetVoiceTimeout();
+                    handleVoiceCommand(text);
+                }
+            }
+        };
+
+        // 引擎断开时自动重启
+        voiceRecognition.onend = () => {
+            setTimeout(() => {
+                try { if (isActive || !isVoiceAwake) voiceRecognition.start(); } catch (e) { }
+            }, 1000);
+        };
+
+        try { voiceRecognition.start(); console.log("🎙️ 语音引擎已在后台隐蔽启动，等待唤醒..."); } catch (e) { }
+    }
+
+    // 6. 挂载到系统自启动中
+    setTimeout(() => {
+        initVoiceControl();
+    }, 2000);
+
     toggleBtn.addEventListener('click', () => { isActive ? stopSystem() : startSystem(); });
     setTimeout(() => { if (!isActive) startSystem(); }, 800);
 }
 
 if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', initHybridControl); }
 else { initHybridControl(); }
-
-// ============================================================================
-// ======================== 语音控制引擎 (Voice Control) ========================
-// ============================================================================
-
-// 1. 刷新语音UI面板
-function updateVoiceUI(status, message, transcript = "") {
-    const dot = document.getElementById('voice-dot');
-    const statusText = document.getElementById('voice-status-text');
-    const msgEl = document.getElementById('voice-message');
-    if (!dot || !statusText || !msgEl) return;
-
-    if (status === "SLEEP") {
-        dot.className = "voice-dot sleeping";
-        statusText.innerText = "语音待机中";
-        statusText.style.color = "#9ca3af";
-    } else if (status === "AWAKE") {
-        dot.className = "voice-dot awake";
-        statusText.innerText = "正在聆听";
-        statusText.style.color = "#10b981";
-    }
-
-    let finalHtml = message;
-    if (transcript) {
-        finalHtml = `<div class="voice-transcript">“${transcript}”</div>` + message;
-    }
-    msgEl.innerHTML = finalHtml;
-}
-
-// 2. 唤醒与休眠控制
-function wakeUpAssistant() {
-    isVoiceAwake = true;
-    updateVoiceUI("AWAKE", "小助手已就绪，请下达指令。");
-    resetVoiceTimeout();
-}
-
-function sleepAssistant(reason) {
-    isVoiceAwake = false;
-    if (voiceTimeoutTimer) clearTimeout(voiceTimeoutTimer);
-    let msg = reason === "timeout"
-        ? "超过1分钟未使用已关闭，可通过再次呼叫“小助手”激活"
-        : "请呼叫“小助手”激活语音控制";
-    updateVoiceUI("SLEEP", msg);
-}
-
-function resetVoiceTimeout() {
-    if (voiceTimeoutTimer) clearTimeout(voiceTimeoutTimer);
-    // 60秒无活动则自动休眠
-    voiceTimeoutTimer = setTimeout(() => {
-        sleepAssistant("timeout");
-    }, 60000);
-}
-
-// 3. 处理语音指令（最高优先级硬件控制，绕过大模型直接生效）
-async function handleVoiceCommand(text) {
-    updateVoiceUI("AWAKE", "处理中...", text);
-
-    // 【指令 A】：停止当前识别
-    if (text.includes("停止当前识别") || text.includes("停止识别") || text.includes("关闭识别")) {
-        let currentState = isActive ? (currentMode === "HEAD" ? "头部" : "手部") : "未开启任何";
-        if (isActive) {
-            stopSystem(); // 调用已有的关闭硬件追踪函数
-            updateVoiceUI("AWAKE", `已关闭${currentState}识别状态`, text);
-        } else {
-            updateVoiceUI("AWAKE", "当前并未开启任何识别", text);
-        }
-        return;
-    }
-
-    // 【指令 B】：开启头部识别
-    if (text.includes("开启头") || text.includes("切换到头")) {
-        if (!isActive) {
-            // 处于全关状态 -> 打开摄像头并切到头控
-            await startSystem();
-            switchMode("HEAD");
-            updateVoiceUI("AWAKE", "已开启头部识别状态", text);
-        } else if (currentMode === "HEAD") {
-            updateVoiceUI("AWAKE", "已处于对应状态 (头部控制)", text);
-        } else {
-            // 处于手控状态 -> 切换
-            switchMode("HEAD");
-            updateVoiceUI("AWAKE", "已转至头部识别状态", text);
-        }
-        return;
-    }
-
-    // 【指令 C】：开启手部识别
-    if (text.includes("开启手") || text.includes("切换到手")) {
-        if (!isActive) {
-            // 处于全关状态 -> 打开摄像头（默认就是手部）
-            await startSystem();
-            switchMode("HAND");
-            updateVoiceUI("AWAKE", "已开启手部识别状态", text);
-        } else if (currentMode === "HAND") {
-            updateVoiceUI("AWAKE", "已处于对应状态 (手部控制)", text);
-        } else {
-            // 处于头控状态 -> 切换
-            switchMode("HAND");
-            updateVoiceUI("AWAKE", "已转至手部识别状态", text);
-        }
-        return;
-    }
-
-    // 【指令 D】：如果未能匹配以上硬编码指令，调用大模型分析意图 (例如“向下滚动网页”等原版功能)
-    callLLMIntentEngine(text);
-}
-
-// 4. LLM 大模型 API 兜底调用
-async function callLLMIntentEngine(text) {
-    updateVoiceUI("AWAKE", "正在思考指令意图...", text);
-    try {
-        const response = await fetch(LLM_API_CONFIG.url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${LLM_API_CONFIG.key}`
-            },
-            body: JSON.stringify({
-                model: LLM_API_CONFIG.model,
-                messages: [
-                    { "role": "system", "content": "你是一个网页控制助手。用户会说出语音指令，请返回一个 JSON 格式的动作，例如 {\"action\": \"scroll_down\"}。支持的动作有: scroll_up, scroll_down, like, go_back, go_forward。如果听不懂，返回 {\"action\": \"unknown\"}。" },
-                    { "role": "user", "content": text }
-                ],
-                response_format: { "type": "json_object" }
-            })
-        });
-
-        const data = await response.json();
-        const result = JSON.parse(data.choices[0].message.content);
-
-        if (result.action && result.action !== "unknown") {
-            updateVoiceUI("AWAKE", `大模型触发动作: ${result.action}`, text);
-            // 这里可以对接你之前的页面操作逻辑，例如 window.scrollBy
-            if (result.action === "scroll_down") window.scrollBy({ top: window.innerHeight * 0.5, behavior: 'smooth' });
-            if (result.action === "scroll_up") window.scrollBy({ top: -window.innerHeight * 0.5, behavior: 'smooth' });
-        } else {
-            updateVoiceUI("AWAKE", "未能理解该指令，请换个说法。", text);
-        }
-    } catch (e) {
-        console.error("LLM API 请求失败:", e);
-        updateVoiceUI("AWAKE", "API 请求失败，请检查网络或 Key。", text);
-    }
-}
-
-// 5. 初始化浏览器语音识别引擎 (静默监听)
-function initVoiceControl() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-        console.error("当前浏览器不支持 Web Speech API。请使用 Chrome。");
-        return;
-    }
-
-    voiceRecognition = new SpeechRecognition();
-    voiceRecognition.continuous = true; // 持续监听
-    voiceRecognition.interimResults = false; // 只取最终结果，提高准确度
-    voiceRecognition.lang = 'zh-CN';
-
-    voiceRecognition.onresult = (event) => {
-        const lastResult = event.results[event.results.length - 1];
-        if (lastResult.isFinal) {
-            const text = lastResult[0].transcript.trim();
-            if (!text) return;
-            console.log("🎤 听到声音:", text);
-
-            // 如果处于休眠状态，只监听唤醒词
-            if (!isVoiceAwake) {
-                if (text.includes("小助手") || text.includes("助手")) {
-                    wakeUpAssistant();
-                }
-            } else {
-                // 如果已被唤醒，重置倒计时并处理指令
-                resetVoiceTimeout();
-                handleVoiceCommand(text);
-            }
-        }
-    };
-
-    // 引擎断开时自动重启（绕过浏览器的自动休眠机制）
-    voiceRecognition.onend = () => {
-        setTimeout(() => {
-            try { voiceRecognition.start(); } catch (e) { }
-        }, 1000);
-    };
-
-    // 启动监听
-    try { voiceRecognition.start(); } catch (e) { }
-}
-
-// 6. 挂载到系统自启动中
-setTimeout(() => {
-    initVoiceControl();
-}, 2000);

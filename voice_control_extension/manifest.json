@@ -13,10 +13,10 @@
                 "<all_urls>"
             ],
             "css": [
-                "content.css"
+                "voice_content.css"
             ],
             "js": [
-                "content.js"
+                "voice_content.js"
             ]
         }
     ]
