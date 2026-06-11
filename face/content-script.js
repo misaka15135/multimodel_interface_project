@@ -1,5 +1,5 @@
 // 幂等守卫：manifest 已注入，防止 service-worker 的 ensureContentScript 二次注入
-if (window.__eyeContentScriptInjected) return;
+if (!window.__eyeContentScriptInjected) {
 window.__eyeContentScriptInjected = true;
 
 let marker;
@@ -240,3 +240,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
   }
 });
+
+} // if (!window.__eyeContentScriptInjected)

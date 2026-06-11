@@ -8,7 +8,6 @@
     "storage",
     "scripting",
     "tabs",
-    "videoCapture",
     "offscreen"
   ],
   "host_permissions": ["<all_urls>"],
