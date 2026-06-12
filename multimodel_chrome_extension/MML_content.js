@@ -676,7 +676,7 @@ async function initHybridControl() {
 
     function resetVoiceTimeout() {
         if (voiceTimeoutTimer) clearTimeout(voiceTimeoutTimer);
-        // 60秒无活动则自动休眠
+        // 60秒无 activity 则自动休眠
         voiceTimeoutTimer = setTimeout(() => {
             sleepAssistant("timeout");
         }, 60000);
@@ -701,14 +701,12 @@ async function initHybridControl() {
         // 【指令 B】：开启头部识别
         if (text.includes("开启头") || text.includes("切换到头")) {
             if (!isActive) {
-                // 处于全关状态 -> 打开摄像头并切到头控
                 await startSystem();
                 switchMode("HEAD");
                 updateVoiceUI("AWAKE", "已开启头部识别状态", text);
             } else if (currentMode === "HEAD") {
                 updateVoiceUI("AWAKE", "已处于对应状态 (头部控制)", text);
             } else {
-                // 处于手控状态 -> 切换
                 switchMode("HEAD");
                 updateVoiceUI("AWAKE", "已转至头部识别状态", text);
             }
@@ -718,30 +716,87 @@ async function initHybridControl() {
         // 【指令 C】：开启手部识别
         if (text.includes("开启手") || text.includes("切换到手")) {
             if (!isActive) {
-                // 处于全关状态 -> 打开摄像头（默认就是手部）
                 await startSystem();
                 switchMode("HAND");
                 updateVoiceUI("AWAKE", "已开启手部识别状态", text);
             } else if (currentMode === "HAND") {
                 updateVoiceUI("AWAKE", "已处于对应状态 (手部控制)", text);
             } else {
-                // 处于头控状态 -> 切换
                 switchMode("HAND");
                 updateVoiceUI("AWAKE", "已转至手部识别状态", text);
             }
             return;
         }
 
-        // 【指令 D】：如果未能匹配以上硬编码指令，调用大模型分析意图 (例如“向下滚动网页”等原版功能)
+        // 【指令 D】：如果未能匹配以上硬编码指令，调用大模型分析意图
         callLLMIntentEngine(text);
     }
 
-    // 4. LLM 大模型 API 兜底调用
-    // ==========================================
-    // 新增：从 voice_content.js 移植的评论自动化引擎
-    // ==========================================
+    // ============================================================================
+    // ===================== 评论核心双引擎 (B站API + 通用DOM) =====================
+    // ============================================================================
+
+    // 引擎 A：B站原生后台 API 注入发包 (移植自 voice_content.js)
+    async function postBilibiliComment(text) {
+        // 从浏览器 Cookie 中提取 B站防 CSRF 跨站攻击令牌
+        const csrfMatch = document.cookie.match(/(?:^|;\s*)bili_jct=([^;]+)/);
+        if (!csrfMatch) return { ok: false, reason: '未登录B站后台，无法获取安全凭证' };
+        const csrf = csrfMatch[1];
+
+        let oid = null, type = 1; // type 1 代表视频稿件评论
+        const s = window.__INITIAL_STATE__ || {};
+
+        const tryGet = (obj, ...keys) => {
+            for (const k of keys) { obj = obj?.[k]; if (obj == null) return null; }
+            return obj;
+        };
+
+        // B站多场景视频/动态/专栏 ID 兼容探测链
+        const idCandidates = [
+            () => tryGet(s, 'aid'), () => tryGet(s, 'videoData', 'aid'),
+            () => tryGet(s, 'videoInfo', 'aid'), () => tryGet(s, 'videoData', 'bvid'),
+            () => tryGet(s, 'bvid'), () => tryGet(s, 'readInfo', 'id'),
+            () => tryGet(s, 'dynamicDetail', 'dynamicId'),
+            () => { let m = location.pathname.match(/\/video\/(BV[a-zA-Z0-9]+)/); if (m) return m[1]; return null; },
+            () => { const el = document.querySelector('[data-aid]'); return el ? el.dataset.aid : null; }
+        ];
+
+        for (const fn of idCandidates) {
+            try { const r = fn(); if (r) { oid = r; break; } } catch (_) { }
+        }
+
+        if (!oid) return { ok: false, reason: '未能成功捕获当前视频的真实 ID' };
+
+        // 构造 B站标准原生评论表单请求体
+        const body = new URLSearchParams();
+        body.append('oid', oid);
+        body.append('type', type);
+        body.append('message', text);
+        body.append('plat', '1');
+        body.append('csrf', csrf);
+        body.append('root', '0');
+        body.append('parent', '0');
+
+        try {
+            const res = await fetch('https://api.bilibili.com/x/v2/reply/add', {
+                method: 'POST',
+                credentials: 'include', // 极度关键：必须强制携带当前站点的登录凭证 Cookie
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString(),
+            });
+            const data = await res.json();
+            if (data.code === 0) return { ok: true, reason: '评论已直接上报至B站后台！' };
+
+            const errMap = { '-101': '账号未登录', '-102': '账号疑似封禁', '-105': '触发图形验证码限制', '-403': '发布权限受限', '-509': '操作过于频繁' };
+            return { ok: false, reason: `B站拒绝接收: ${errMap[String(data.code)] || data.message}` };
+        } catch (e) {
+            return { ok: false, reason: '网络底层请求异常' };
+        }
+    }
+
+    // 引擎 B：通用 DOM 模拟输入引擎 (针对非B站平台的兜底策略)
     async function executeCommentDom(commentText) {
-        if (!commentText) return false;
+        if (!commentText) return { ok: false, reason: '内容为空' };
 
         // 1. 寻找评论输入框
         const inputSelectors = ['#comment-input', '[id*="comment"]', '[class*="comment"] input', 'input[placeholder*="评论"]', 'textarea[placeholder*="评论"]', '[contenteditable="true"]'];
@@ -750,15 +805,12 @@ async function initHybridControl() {
             inputEl = document.querySelector(sel);
             if (inputEl) break;
         }
-        if (!inputEl) {
-            console.warn("未找到评论输入框");
-            return false;
-        }
+        if (!inputEl) return { ok: false, reason: '未找到页面的评论输入框' };
 
         // 2. 模拟聚焦并填入文本
         inputEl.focus();
         inputEl.click();
-        await new Promise(r => setTimeout(r, 150)); // 等待UI响应
+        await new Promise(r => setTimeout(r, 150));
 
         if (inputEl.isContentEditable) {
             inputEl.textContent = commentText;
@@ -766,10 +818,9 @@ async function initHybridControl() {
             inputEl.value = commentText;
         }
 
-        // 触发框架的双向绑定更新 (Vue/React)
+        // 穿透 Vue/React 双向状态绑定
         ['input', 'change'].forEach(n => inputEl.dispatchEvent(new Event(n, { bubbles: true, composed: true })));
-
-        await new Promise(r => setTimeout(r, 500)); // 稍微等待发送按钮亮起
+        await new Promise(r => setTimeout(r, 500));
 
         // 3. 寻找发送/发布按钮
         let submitBtn = null;
@@ -781,7 +832,6 @@ async function initHybridControl() {
                 if (el && el.offsetParent !== null) { submitBtn = el; break; }
             }
         }
-        // 如果没找到，按文字暴力查找
         if (!submitBtn) {
             const btns = document.querySelectorAll('button, [role="button"], span, div');
             for (const btn of btns) {
@@ -794,22 +844,18 @@ async function initHybridControl() {
         // 4. 执行提交
         if (submitBtn && !submitBtn.disabled) {
             submitBtn.click();
-            return true;
+            return { ok: true, reason: '模拟点击提交成功' };
         } else {
-            // 兜底方案：模拟按下 Enter 键
             inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true, composed: true }));
-            return true;
+            return { ok: true, reason: '通过模拟回车键提交' };
         }
     }
 
 
-    // ==========================================
-    // 4. LLM 大模型 API 兜底调用 (已扩充全套控制)
-    // ==========================================
+    // 4. LLM 大模型 API 智能控制中心
     async function callLLMIntentEngine(text) {
         updateVoiceUI("AWAKE", "正在思考指令意图...", text);
 
-        // 【升级 Prompt】：明确告知大模型所有可用动作，以及抽取评论内容的要求
         const systemPrompt = `你是一个网页控制助手。根据用户的语音指令，推断想要执行的操作并严格返回 JSON 格式。
             支持的 action 有: 
             - scroll_up: 向上滚动
@@ -846,7 +892,6 @@ async function initHybridControl() {
             if (result.action && result.action !== "unknown") {
                 updateVoiceUI("AWAKE", `大模型触发动作: ${result.action}`, text);
 
-                // 【核心映射】：将大模型的意图映射到你已有的本地函数
                 switch (result.action) {
                     case "scroll_down":
                         window.scrollBy({ top: window.innerHeight * 0.6, behavior: 'smooth' });
@@ -862,28 +907,37 @@ async function initHybridControl() {
                         break;
                     case "refresh":
                         location.reload();
-                        triggerInstantUI("box-refresh", true); // 触发右侧UI亮起
+                        triggerInstantUI("box-refresh", true);
                         break;
                     case "play_pause":
-                        const isToggled = togglePlayPause(); // 调用你已有的视频控制函数
+                        const isToggled = togglePlayPause();
                         if (isToggled) triggerInstantUI("box-play-pause", true);
                         break;
                     case "speed":
-                        const isSpedUp = toggleSpeed(); // 调用你已有的倍速函数
+                        const isSpedUp = toggleSpeed();
                         if (isSpedUp) triggerInstantUI("box-speed", true);
                         break;
                     case "like":
-                        const isLiked = triggerPageLike(); // 调用你已有的点赞函数
+                        const isLiked = triggerPageLike();
                         if (isLiked) triggerInstantUI("box-like", true);
                         break;
                     case "comment":
                         if (result.text) {
-                            updateVoiceUI("AWAKE", `正在输入评论...`, result.text);
-                            const success = await executeCommentDom(result.text);
-                            if (success) {
-                                updateVoiceUI("AWAKE", `评论发送成功！`, text);
+                            updateVoiceUI("AWAKE", `正在执行评论分发...`, result.text);
+
+                            let res;
+                            // 🚀 核心改进：执行环境智能路由路由
+                            if (location.hostname.includes('bilibili.com')) {
+                                res = await postBilibiliComment(result.text);
                             } else {
-                                updateVoiceUI("AWAKE", `未能找到页面的评论输入框`, text);
+                                res = await executeCommentDom(result.text);
+                            }
+
+                            // 优雅地在UI上反馈状态结果
+                            if (res.ok) {
+                                updateVoiceUI("AWAKE", `✅ ${res.reason}`, text);
+                            } else {
+                                updateVoiceUI("AWAKE", `❌ 发送失败: ${res.reason}`, text);
                             }
                         } else {
                             updateVoiceUI("AWAKE", `未识别到具体的评论内容`, text);
@@ -915,24 +969,19 @@ async function initHybridControl() {
         voiceRecognition.onresult = (event) => {
             const lastResult = event.results[event.results.length - 1];
             if (lastResult.isFinal) {
-                // 【清洗逻辑】：去除所有常见标点符号
                 let text = lastResult[0].transcript.trim().replace(/[。，？！,.?! ]/g, '');
                 if (!text) return;
                 console.log("🎤 听到声音(清洗后):", text);
 
-                // 【修复点 2】：增加防御性警告，如果打断了说明 UI 没注入成功
                 if (!document.getElementById('voice-dot')) {
                     console.warn("⚠️ 警告：检测到语音，但页面上未找到 #voice-dot 元素！请确认 injectUI() 是否正确执行。");
                 }
 
-                // 如果处于休眠状态，检查唤醒词
                 if (!isVoiceAwake) {
                     if (text.includes("小助手") || text.includes("助手")) {
                         console.log("🚀 成功匹配唤醒词，正在激活唤醒状态...");
                         wakeUpAssistant();
 
-                        // 【功能突破】：支持连读（如 “小助手开启头部识别”）
-                        // 移除唤醒词及前面的所有内容，提取后面的核心硬控制指令
                         const commandText = text.replace(/.*(小助手|助手)/, '').trim();
                         if (commandText) {
                             console.log("🔗 检测到连读指令，直接下发处理:", commandText);
@@ -940,14 +989,12 @@ async function initHybridControl() {
                         }
                     }
                 } else {
-                    // 如果已被唤醒，重置倒计时并处理指令
                     resetVoiceTimeout();
                     handleVoiceCommand(text);
                 }
             }
         };
 
-        // 引擎断开时自动重启
         voiceRecognition.onend = () => {
             setTimeout(() => {
                 try { if (isActive || !isVoiceAwake) voiceRecognition.start(); } catch (e) { }
