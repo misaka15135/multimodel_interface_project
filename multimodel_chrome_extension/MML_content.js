@@ -329,7 +329,7 @@ async function initHybridControl() {
             if (landmarks[4].y < landmarks[3].y && landmarks[4].y < landmarks[2].y) return "RINGS_UP";
         }
         if (indexEx && !middleEx && !ringEx && pinkyEx) return "HORNS";
-        if (thumbEx && !indexEx && !middleEx && !ringEx && !pinkyEx) return "THUMBS_UP";
+        if (indexEx && middleEx && ringEx && !pinkyEx) return "THREE_UP";
 
         if (indexEx && middleEx && ringEx && pinkyEx) {
             const dy = landmarks[9].y - landmarks[0].y;
@@ -491,7 +491,7 @@ async function initHybridControl() {
         }
 
         // 把 "MOUTH_OPEN" 塞入打断判定池，动作中途一旦闭嘴能立刻触发变红缩回防错机制
-        if (activeGesture && activeGesture !== gesture && ["PALM_UP", "PALM_DOWN", "HEAD_UP", "HEAD_DOWN", "V_SIGN", "FREE_MODE_TOGGLE", "THUMBS_UP", "DOUBLE_SHAKE", "MOUTH_OPEN"].includes(activeGesture)) {
+        if (activeGesture && activeGesture !== gesture && ["PALM_UP", "PALM_DOWN", "HEAD_UP", "HEAD_DOWN", "V_SIGN", "FREE_MODE_TOGGLE","THREE_UP", "DOUBLE_SHAKE", "MOUTH_OPEN"].includes(activeGesture)) {
             resetUIState(); activeGesture = null;
         }
 
